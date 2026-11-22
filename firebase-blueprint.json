@@ -1,0 +1,280 @@
+{
+  "entities": {
+    "UserProfile": {
+      "title": "UserProfile",
+      "description": "Perfil e preferências do perfumista no atelier.",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "displayName": { "type": "string", "minLength": 1, "maxLength": 120 },
+        "stockModuleEnabled": { "type": "boolean" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["uid", "displayName", "stockModuleEnabled", "createdAt", "updatedAt"]
+    },
+    "UserPrivateInfo": {
+      "title": "UserPrivateInfo",
+      "description": "Informações privadas (PII) isoladas do usuário.",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "email": { "type": "string", "format": "email", "maxLength": 200 },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["uid", "email", "updatedAt"]
+    },
+    "Supplier": {
+      "title": "Supplier",
+      "description": "Fornecedor de matérias-primas ou embalagens.",
+      "type": "object",
+      "properties": {
+        "ownerId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "name": { "type": "string", "minLength": 1, "maxLength": 140 },
+        "contact": { "type": "string", "maxLength": 140 },
+        "website": { "type": "string", "maxLength": 240 },
+        "notes": { "type": "string", "maxLength": 800 },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["ownerId", "name", "contact", "website", "notes", "createdAt", "updatedAt"]
+    },
+    "Insumo": {
+      "title": "Insumo",
+      "description": "Matéria-prima ou embalagem cadastrada na biblioteca do perfumista.",
+      "type": "object",
+      "properties": {
+        "ownerId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "supplierId": { "type": "string", "maxLength": 128 },
+        "supplierName": { "type": "string", "maxLength": 140 },
+        "name": { "type": "string", "minLength": 1, "maxLength": 160 },
+        "category": { "type": "string", "enum": ["Matéria-prima", "Embalagem"] },
+        "subcategory": { "type": "string", "minLength": 1, "maxLength": 80 },
+        "purchasedQty": { "type": "number" },
+        "purchaseUnit": { "type": "string", "enum": ["ml", "L", "g", "kg", "un"] },
+        "purchasePrice": { "type": "number" },
+        "freight": { "type": "number" },
+        "totalCost": { "type": "number" },
+        "unitCost": { "type": "number" },
+        "purchaseDate": { "type": "string", "minLength": 4, "maxLength": 30 },
+        "density": { "type": "number" },
+        "concentration": { "type": "number" },
+        "stockEnabled": { "type": "boolean" },
+        "stockQty": { "type": "number" },
+        "stockUsed": { "type": "number" },
+        "stockMinAlert": { "type": "number" },
+        "notes": { "type": "string", "maxLength": 1000 },
+        "priceUpdatedAt": { "type": "string", "format": "date-time" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": [
+        "ownerId",
+        "name",
+        "category",
+        "subcategory",
+        "purchasedQty",
+        "purchaseUnit",
+        "purchasePrice",
+        "freight",
+        "totalCost",
+        "unitCost",
+        "purchaseDate",
+        "stockEnabled",
+        "stockQty",
+        "stockUsed",
+        "stockMinAlert",
+        "notes",
+        "priceUpdatedAt",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "InsumoPriceHistory": {
+      "title": "InsumoPriceHistory",
+      "description": "Registro histórico de compra e atualização de preço de um insumo.",
+      "type": "object",
+      "properties": {
+        "ownerId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "insumoId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "supplierName": { "type": "string", "maxLength": 140 },
+        "purchasedQty": { "type": "number" },
+        "purchaseUnit": { "type": "string", "enum": ["ml", "L", "g", "kg", "un"] },
+        "purchasePrice": { "type": "number" },
+        "freight": { "type": "number" },
+        "totalCost": { "type": "number" },
+        "unitCost": { "type": "number" },
+        "purchaseDate": { "type": "string", "minLength": 4, "maxLength": 30 },
+        "notes": { "type": "string", "maxLength": 500 },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": [
+        "ownerId",
+        "insumoId",
+        "supplierName",
+        "purchasedQty",
+        "purchaseUnit",
+        "purchasePrice",
+        "freight",
+        "totalCost",
+        "unitCost",
+        "purchaseDate",
+        "notes",
+        "createdAt"
+      ]
+    },
+    "StockMovement": {
+      "title": "StockMovement",
+      "description": "Movimentação de entrada, saída, ajuste ou produção no estoque.",
+      "type": "object",
+      "properties": {
+        "ownerId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "insumoId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "insumoName": { "type": "string", "minLength": 1, "maxLength": 160 },
+        "type": { "type": "string", "enum": ["entrada", "saida", "ajuste", "producao"] },
+        "quantity": { "type": "number" },
+        "unit": { "type": "string", "enum": ["ml", "L", "g", "kg", "un"] },
+        "reason": { "type": "string", "minLength": 1, "maxLength": 300 },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["ownerId", "insumoId", "insumoName", "type", "quantity", "unit", "reason", "createdAt"]
+    },
+    "CustomBase": {
+      "title": "CustomBase",
+      "description": "Base personalizada ou comprada pronta salva para reutilização.",
+      "type": "object",
+      "properties": {
+        "ownerId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "name": { "type": "string", "minLength": 1, "maxLength": 140 },
+        "baseType": { "type": "string", "enum": ["predefined_override", "custom", "purchased_ready"] },
+        "propChoice": { "type": "string", "maxLength": 40 },
+        "batchQty": { "type": "number" },
+        "batchUnit": { "type": "string", "enum": ["ml", "g"] },
+        "purchasePrice": { "type": "number" },
+        "freight": { "type": "number" },
+        "ingredients": { "type": "array" },
+        "notes": { "type": "string", "maxLength": 800 },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": [
+        "ownerId",
+        "name",
+        "baseType",
+        "batchQty",
+        "batchUnit",
+        "purchasePrice",
+        "freight",
+        "ingredients",
+        "notes",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "Formula": {
+      "title": "Formula",
+      "description": "Fórmula olfativa salva (rascunho ou finalizada) com versionamento.",
+      "type": "object",
+      "properties": {
+        "ownerId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "brandName": { "type": "string", "maxLength": 140 },
+        "perfumeName": { "type": "string", "maxLength": 160 },
+        "inspiredBy": { "type": "string", "minLength": 1, "maxLength": 160 },
+        "version": { "type": "integer" },
+        "status": { "type": "string", "enum": ["rascunho", "finalizada"] },
+        "targetVolumeMl": { "type": "number" },
+        "unitCost": { "type": "number" },
+        "data": { "type": "object" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": [
+        "ownerId",
+        "brandName",
+        "perfumeName",
+        "inspiredBy",
+        "version",
+        "status",
+        "targetVolumeMl",
+        "unitCost",
+        "data",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "Calculation": {
+      "title": "Calculation",
+      "description": "Snapshot histórico imutável de um cálculo de perfume.",
+      "type": "object",
+      "properties": {
+        "ownerId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "formulaId": { "type": "string", "maxLength": 128 },
+        "brandName": { "type": "string", "maxLength": 140 },
+        "perfumeName": { "type": "string", "maxLength": 160 },
+        "inspiredBy": { "type": "string", "minLength": 1, "maxLength": 160 },
+        "formulaVersion": { "type": "integer" },
+        "sizeMl": { "type": "number" },
+        "liquidCost": { "type": "number" },
+        "packagingCost": { "type": "number" },
+        "unitCost": { "type": "number" },
+        "stockDeducted": { "type": "boolean" },
+        "result": { "type": "object" },
+        "draftSnapshot": { "type": "object" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": [
+        "ownerId",
+        "brandName",
+        "perfumeName",
+        "inspiredBy",
+        "formulaVersion",
+        "sizeMl",
+        "liquidCost",
+        "packagingCost",
+        "unitCost",
+        "stockDeducted",
+        "result",
+        "draftSnapshot",
+        "createdAt"
+      ]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": { "$ref": "#/entities/UserProfile" },
+      "description": "Configurações públicas do perfil do usuário."
+    },
+    "/users/{userId}/private/{docId}": {
+      "schema": { "$ref": "#/entities/UserPrivateInfo" },
+      "description": "Dados pessoais (e-mail) isolados do usuário."
+    },
+    "/users/{userId}/suppliers/{supplierId}": {
+      "schema": { "$ref": "#/entities/Supplier" },
+      "description": "Fornecedores cadastrados pelo usuário."
+    },
+    "/users/{userId}/insumos/{insumoId}": {
+      "schema": { "$ref": "#/entities/Insumo" },
+      "description": "Biblioteca central de insumos do usuário."
+    },
+    "/users/{userId}/insumos/{insumoId}/priceHistory/{historyId}": {
+      "schema": { "$ref": "#/entities/InsumoPriceHistory" },
+      "description": "Histórico de compras e atualizações de preço do insumo."
+    },
+    "/users/{userId}/stockMovements/{movementId}": {
+      "schema": { "$ref": "#/entities/StockMovement" },
+      "description": "Histórico de movimentações de estoque do usuário."
+    },
+    "/users/{userId}/customBases/{baseId}": {
+      "schema": { "$ref": "#/entities/CustomBase" },
+      "description": "Bases personalizadas e compradas salvas pelo usuário."
+    },
+    "/users/{userId}/formulas/{formulaId}": {
+      "schema": { "$ref": "#/entities/Formula" },
+      "description": "Fórmulas olfativas salvas pelo usuário."
+    },
+    "/users/{userId}/calculations/{calculationId}": {
+      "schema": { "$ref": "#/entities/Calculation" },
+      "description": "Histórico imutável de cálculos de custo do usuário."
+    }
+  }
+}

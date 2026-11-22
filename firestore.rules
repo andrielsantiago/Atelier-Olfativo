@@ -1,0 +1,426 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Global Safety Net: Default Deny All
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // --- Primitive Helpers ---
+    function isSignedIn() {
+      return request.auth != null && request.auth.token.email_verified == true;
+    }
+
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isValidStr(val, minLen, maxLen) {
+      return val is string && val.size() >= minLen && val.size() <= maxLen;
+    }
+
+    function isValidNum(val, minVal, maxVal) {
+      return (val is int || val is float) && val >= minVal && val <= maxVal;
+    }
+
+    function isValidOptStr(data, field, maxLen) {
+      return !(field in data) || data[field] == null || (data[field] is string && data[field].size() <= maxLen);
+    }
+
+    function isValidOptNum(data, field, minVal, maxVal) {
+      return !(field in data) || data[field] == null || isValidNum(data[field], minVal, maxVal);
+    }
+
+    // --- Entity Validation Blueprints ---
+    function isValidUserProfile(data, userId) {
+      return data.keys().hasAll(['uid', 'displayName', 'stockModuleEnabled', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['uid', 'displayName', 'stockModuleEnabled', 'createdAt', 'updatedAt'])
+        && data.uid == request.auth.uid
+        && data.uid == userId
+        && isValidId(data.uid)
+        && isValidStr(data.displayName, 1, 120)
+        && data.stockModuleEnabled is bool
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidUserPrivateInfo(data, userId) {
+      return data.keys().hasAll(['uid', 'email', 'updatedAt'])
+        && data.keys().hasOnly(['uid', 'email', 'updatedAt'])
+        && data.uid == request.auth.uid
+        && data.uid == userId
+        && isValidId(data.uid)
+        && isValidStr(data.email, 3, 200)
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidSupplier(data, userId) {
+      return data.keys().hasAll(['ownerId', 'name', 'contact', 'website', 'notes', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['ownerId', 'name', 'contact', 'website', 'notes', 'createdAt', 'updatedAt'])
+        && data.ownerId == request.auth.uid
+        && data.ownerId == userId
+        && isValidId(data.ownerId)
+        && isValidStr(data.name, 1, 140)
+        && isValidStr(data.contact, 0, 140)
+        && isValidStr(data.website, 0, 240)
+        && isValidStr(data.notes, 0, 800)
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidInsumo(data, userId) {
+      return data.keys().hasAll([
+          'ownerId', 'name', 'category', 'subcategory', 'purchasedQty', 'purchaseUnit',
+          'purchasePrice', 'freight', 'totalCost', 'unitCost', 'purchaseDate',
+          'stockEnabled', 'stockQty', 'stockUsed', 'stockMinAlert', 'notes',
+          'priceUpdatedAt', 'createdAt', 'updatedAt'
+        ])
+        && data.keys().hasOnly([
+          'ownerId', 'supplierId', 'supplierName', 'name', 'category', 'subcategory',
+          'purchasedQty', 'purchaseUnit', 'purchasePrice', 'freight', 'totalCost',
+          'unitCost', 'purchaseDate', 'density', 'concentration', 'stockEnabled',
+          'stockQty', 'stockUsed', 'stockMinAlert', 'notes', 'priceUpdatedAt',
+          'createdAt', 'updatedAt'
+        ])
+        && data.ownerId == request.auth.uid
+        && data.ownerId == userId
+        && isValidId(data.ownerId)
+        && isValidOptStr(data, 'supplierId', 128)
+        && isValidOptStr(data, 'supplierName', 140)
+        && isValidStr(data.name, 1, 160)
+        && data.category in ['Matéria-prima', 'Embalagem']
+        && isValidStr(data.subcategory, 1, 80)
+        && isValidNum(data.purchasedQty, 0.0001, 10000000)
+        && data.purchaseUnit in ['ml', 'L', 'g', 'kg', 'un']
+        && isValidNum(data.purchasePrice, 0, 10000000)
+        && isValidNum(data.freight, 0, 10000000)
+        && isValidNum(data.totalCost, 0, 20000000)
+        && isValidNum(data.unitCost, 0, 10000000)
+        && isValidStr(data.purchaseDate, 4, 30)
+        && isValidOptNum(data, 'density', 0.001, 50)
+        && isValidOptNum(data, 'concentration', 0.001, 100)
+        && data.stockEnabled is bool
+        && isValidNum(data.stockQty, 0, 100000000)
+        && isValidNum(data.stockUsed, 0, 100000000)
+        && isValidNum(data.stockMinAlert, 0, 100000000)
+        && isValidStr(data.notes, 0, 1000)
+        && data.priceUpdatedAt is timestamp
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidPriceHistory(data, userId, insumoId) {
+      return data.keys().hasAll([
+          'ownerId', 'insumoId', 'supplierName', 'purchasedQty', 'purchaseUnit',
+          'purchasePrice', 'freight', 'totalCost', 'unitCost', 'purchaseDate',
+          'notes', 'createdAt'
+        ])
+        && data.keys().hasOnly([
+          'ownerId', 'insumoId', 'supplierName', 'purchasedQty', 'purchaseUnit',
+          'purchasePrice', 'freight', 'totalCost', 'unitCost', 'purchaseDate',
+          'notes', 'createdAt'
+        ])
+        && data.ownerId == request.auth.uid
+        && data.ownerId == userId
+        && data.insumoId == insumoId
+        && isValidId(data.ownerId)
+        && isValidId(data.insumoId)
+        && isValidStr(data.supplierName, 0, 140)
+        && isValidNum(data.purchasedQty, 0.0001, 10000000)
+        && data.purchaseUnit in ['ml', 'L', 'g', 'kg', 'un']
+        && isValidNum(data.purchasePrice, 0, 10000000)
+        && isValidNum(data.freight, 0, 10000000)
+        && isValidNum(data.totalCost, 0, 20000000)
+        && isValidNum(data.unitCost, 0, 10000000)
+        && isValidStr(data.purchaseDate, 4, 30)
+        && isValidStr(data.notes, 0, 500)
+        && data.createdAt is timestamp;
+    }
+
+    function isValidStockMovement(data, userId) {
+      return data.keys().hasAll([
+          'ownerId', 'insumoId', 'insumoName', 'type', 'quantity', 'unit', 'reason', 'createdAt'
+        ])
+        && data.keys().hasOnly([
+          'ownerId', 'insumoId', 'insumoName', 'type', 'quantity', 'unit', 'reason', 'createdAt'
+        ])
+        && data.ownerId == request.auth.uid
+        && data.ownerId == userId
+        && isValidId(data.ownerId)
+        && isValidId(data.insumoId)
+        && isValidStr(data.insumoName, 1, 160)
+        && data.type in ['entrada', 'saida', 'ajuste', 'producao']
+        && isValidNum(data.quantity, 0.0001, 100000000)
+        && data.unit in ['ml', 'L', 'g', 'kg', 'un']
+        && isValidStr(data.reason, 1, 300)
+        && data.createdAt is timestamp;
+    }
+
+    function isValidCustomBase(data, userId) {
+      return data.keys().hasAll([
+          'ownerId', 'name', 'baseType', 'batchQty', 'batchUnit',
+          'purchasePrice', 'freight', 'ingredients', 'notes', 'createdAt', 'updatedAt'
+        ])
+        && data.keys().hasOnly([
+          'ownerId', 'name', 'baseType', 'propChoice', 'batchQty', 'batchUnit',
+          'purchasePrice', 'freight', 'ingredients', 'notes', 'createdAt', 'updatedAt'
+        ])
+        && data.ownerId == request.auth.uid
+        && data.ownerId == userId
+        && isValidId(data.ownerId)
+        && isValidStr(data.name, 1, 140)
+        && data.baseType in ['predefined_override', 'custom', 'purchased_ready']
+        && isValidOptStr(data, 'propChoice', 40)
+        && isValidNum(data.batchQty, 0.0001, 10000000)
+        && data.batchUnit in ['ml', 'g']
+        && isValidNum(data.purchasePrice, 0, 10000000)
+        && isValidNum(data.freight, 0, 10000000)
+        && data.ingredients is list
+        && data.ingredients.size() <= 60
+        && (data.ingredients.size() == 0 || data.ingredients[0] is map)
+        && isValidStr(data.notes, 0, 800)
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidFormula(data, userId) {
+      return data.keys().hasAll([
+          'ownerId', 'brandName', 'perfumeName', 'inspiredBy', 'version',
+          'status', 'targetVolumeMl', 'unitCost', 'data', 'createdAt', 'updatedAt'
+        ])
+        && data.keys().hasOnly([
+          'ownerId', 'brandName', 'perfumeName', 'inspiredBy', 'version',
+          'status', 'targetVolumeMl', 'unitCost', 'data', 'createdAt', 'updatedAt'
+        ])
+        && data.ownerId == request.auth.uid
+        && data.ownerId == userId
+        && isValidId(data.ownerId)
+        && isValidStr(data.brandName, 0, 140)
+        && isValidStr(data.perfumeName, 0, 160)
+        && isValidStr(data.inspiredBy, 1, 160)
+        && data.version is int && data.version >= 1 && data.version <= 10000
+        && data.status in ['rascunho', 'finalizada']
+        && isValidNum(data.targetVolumeMl, 0.1, 1000000)
+        && isValidNum(data.unitCost, 0, 10000000)
+        && data.data is map
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidCalculation(data, userId) {
+      return data.keys().hasAll([
+          'ownerId', 'brandName', 'perfumeName', 'inspiredBy', 'formulaVersion',
+          'sizeMl', 'liquidCost', 'packagingCost', 'unitCost', 'stockDeducted',
+          'result', 'draftSnapshot', 'createdAt'
+        ])
+        && data.keys().hasOnly([
+          'ownerId', 'formulaId', 'brandName', 'perfumeName', 'inspiredBy',
+          'formulaVersion', 'sizeMl', 'liquidCost', 'packagingCost', 'unitCost',
+          'stockDeducted', 'result', 'draftSnapshot', 'createdAt'
+        ])
+        && data.ownerId == request.auth.uid
+        && data.ownerId == userId
+        && isValidId(data.ownerId)
+        && isValidOptStr(data, 'formulaId', 128)
+        && isValidStr(data.brandName, 0, 140)
+        && isValidStr(data.perfumeName, 0, 160)
+        && isValidStr(data.inspiredBy, 1, 160)
+        && data.formulaVersion is int && data.formulaVersion >= 1 && data.formulaVersion <= 10000
+        && isValidNum(data.sizeMl, 0.1, 1000000)
+        && isValidNum(data.liquidCost, 0, 10000000)
+        && isValidNum(data.packagingCost, 0, 10000000)
+        && isValidNum(data.unitCost, 0, 10000000)
+        && data.stockDeducted is bool
+        && data.result is map
+        && data.draftSnapshot is map
+        && data.createdAt is timestamp;
+    }
+
+    // --- Collection Rules ---
+    match /users/{userId} {
+      allow get: if isOwner(userId) && isValidId(userId);
+      allow list: if isOwner(userId) && resource.data.uid == request.auth.uid;
+      allow create: if isOwner(userId)
+        && isValidId(userId)
+        && isValidUserProfile(incoming(), userId)
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time;
+      allow update: if isOwner(userId)
+        && isValidId(userId)
+        && isValidUserProfile(incoming(), userId)
+        && incoming().uid == existing().uid
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && incoming().diff(existing()).affectedKeys().hasOnly(['displayName', 'stockModuleEnabled', 'updatedAt']);
+      allow delete: if false;
+
+      match /private/{docId} {
+        allow get: if isOwner(userId) && isValidId(userId) && isValidId(docId);
+        allow list: if isOwner(userId) && resource.data.uid == request.auth.uid;
+        allow create: if isOwner(userId)
+          && isValidId(userId)
+          && isValidId(docId)
+          && isValidUserPrivateInfo(incoming(), userId)
+          && incoming().updatedAt == request.time;
+        allow update: if isOwner(userId)
+          && isValidId(userId)
+          && isValidId(docId)
+          && isValidUserPrivateInfo(incoming(), userId)
+          && incoming().uid == existing().uid
+          && incoming().updatedAt == request.time
+          && incoming().diff(existing()).affectedKeys().hasOnly(['email', 'updatedAt']);
+        allow delete: if false;
+      }
+
+      match /suppliers/{supplierId} {
+        allow get: if isOwner(userId) && isValidId(userId) && isValidId(supplierId);
+        allow list: if isOwner(userId) && resource.data.ownerId == request.auth.uid;
+        allow create: if isOwner(userId)
+          && isValidId(userId)
+          && isValidId(supplierId)
+          && isValidSupplier(incoming(), userId)
+          && incoming().createdAt == request.time
+          && incoming().updatedAt == request.time
+          && exists(/databases/$(database)/documents/users/$(userId));
+        allow update: if isOwner(userId)
+          && isValidId(userId)
+          && isValidId(supplierId)
+          && isValidSupplier(incoming(), userId)
+          && incoming().ownerId == existing().ownerId
+          && incoming().createdAt == existing().createdAt
+          && incoming().updatedAt == request.time
+          && incoming().diff(existing()).affectedKeys().hasOnly(['name', 'contact', 'website', 'notes', 'updatedAt']);
+        allow delete: if isOwner(userId) && isValidId(userId) && isValidId(supplierId);
+      }
+
+      match /insumos/{insumoId} {
+        allow get: if isOwner(userId) && isValidId(userId) && isValidId(insumoId);
+        allow list: if isOwner(userId) && resource.data.ownerId == request.auth.uid;
+        allow create: if isOwner(userId)
+          && isValidId(userId)
+          && isValidId(insumoId)
+          && isValidInsumo(incoming(), userId)
+          && incoming().createdAt == request.time
+          && incoming().updatedAt == request.time
+          && exists(/databases/$(database)/documents/users/$(userId));
+        allow update: if isOwner(userId)
+          && isValidId(userId)
+          && isValidId(insumoId)
+          && isValidInsumo(incoming(), userId)
+          && incoming().ownerId == existing().ownerId
+          && incoming().createdAt == existing().createdAt
+          && incoming().updatedAt == request.time
+          && (
+            incoming().diff(existing()).affectedKeys().hasOnly([
+              'supplierId', 'supplierName', 'name', 'category', 'subcategory',
+              'purchasedQty', 'purchaseUnit', 'purchasePrice', 'freight', 'totalCost',
+              'unitCost', 'purchaseDate', 'density', 'concentration', 'stockEnabled',
+              'stockQty', 'stockUsed', 'stockMinAlert', 'notes', 'priceUpdatedAt', 'updatedAt'
+            ])
+          );
+        allow delete: if isOwner(userId) && isValidId(userId) && isValidId(insumoId);
+
+        match /priceHistory/{historyId} {
+          allow get: if isOwner(userId) && isValidId(userId) && isValidId(insumoId) && isValidId(historyId);
+          allow list: if isOwner(userId) && resource.data.ownerId == request.auth.uid;
+          allow create: if isOwner(userId)
+            && isValidId(userId)
+            && isValidId(insumoId)
+            && isValidId(historyId)
+            && isValidPriceHistory(incoming(), userId, insumoId)
+            && incoming().createdAt == request.time
+            && exists(/databases/$(database)/documents/users/$(userId)/insumos/$(insumoId));
+          allow update: if false;
+          allow delete: if isOwner(userId) && isValidId(userId) && isValidId(insumoId) && isValidId(historyId);
+        }
+      }
+
+      match /stockMovements/{movementId} {
+        allow get: if isOwner(userId) && isValidId(userId) && isValidId(movementId);
+        allow list: if isOwner(userId) && resource.data.ownerId == request.auth.uid;
+        allow create: if isOwner(userId)
+          && isValidId(userId)
+          && isValidId(movementId)
+          && isValidStockMovement(incoming(), userId)
+          && incoming().createdAt == request.time
+          && exists(/databases/$(database)/documents/users/$(userId)/insumos/$(incoming().insumoId));
+        allow update: if false;
+        allow delete: if isOwner(userId) && isValidId(userId) && isValidId(movementId);
+      }
+
+      match /customBases/{baseId} {
+        allow get: if isOwner(userId) && isValidId(userId) && isValidId(baseId);
+        allow list: if isOwner(userId) && resource.data.ownerId == request.auth.uid;
+        allow create: if isOwner(userId)
+          && isValidId(userId)
+          && isValidId(baseId)
+          && isValidCustomBase(incoming(), userId)
+          && incoming().createdAt == request.time
+          && incoming().updatedAt == request.time
+          && exists(/databases/$(database)/documents/users/$(userId));
+        allow update: if isOwner(userId)
+          && isValidId(userId)
+          && isValidId(baseId)
+          && isValidCustomBase(incoming(), userId)
+          && incoming().ownerId == existing().ownerId
+          && incoming().createdAt == existing().createdAt
+          && incoming().updatedAt == request.time
+          && incoming().diff(existing()).affectedKeys().hasOnly([
+            'name', 'baseType', 'propChoice', 'batchQty', 'batchUnit',
+            'purchasePrice', 'freight', 'ingredients', 'notes', 'updatedAt'
+          ]);
+        allow delete: if isOwner(userId) && isValidId(userId) && isValidId(baseId);
+      }
+
+      match /formulas/{formulaId} {
+        allow get: if isOwner(userId) && isValidId(userId) && isValidId(formulaId);
+        allow list: if isOwner(userId) && resource.data.ownerId == request.auth.uid;
+        allow create: if isOwner(userId)
+          && isValidId(userId)
+          && isValidId(formulaId)
+          && isValidFormula(incoming(), userId)
+          && incoming().createdAt == request.time
+          && incoming().updatedAt == request.time
+          && exists(/databases/$(database)/documents/users/$(userId));
+        allow update: if isOwner(userId)
+          && isValidId(userId)
+          && isValidId(formulaId)
+          && isValidFormula(incoming(), userId)
+          && incoming().ownerId == existing().ownerId
+          && incoming().createdAt == existing().createdAt
+          && incoming().updatedAt == request.time
+          && incoming().diff(existing()).affectedKeys().hasOnly([
+            'brandName', 'perfumeName', 'inspiredBy', 'version',
+            'status', 'targetVolumeMl', 'unitCost', 'data', 'updatedAt'
+          ]);
+        allow delete: if isOwner(userId) && isValidId(userId) && isValidId(formulaId);
+      }
+
+      match /calculations/{calculationId} {
+        allow get: if isOwner(userId) && isValidId(userId) && isValidId(calculationId);
+        allow list: if isOwner(userId) && resource.data.ownerId == request.auth.uid;
+        allow create: if isOwner(userId)
+          && isValidId(userId)
+          && isValidId(calculationId)
+          && isValidCalculation(incoming(), userId)
+          && incoming().createdAt == request.time
+          && exists(/databases/$(database)/documents/users/$(userId));
+        // Historical calculations are immutable snapshots
+        allow update: if false;
+        allow delete: if isOwner(userId) && isValidId(userId) && isValidId(calculationId);
+      }
+    }
+  }
+}

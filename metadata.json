@@ -1,0 +1,6 @@
+{
+  "name": "Atelier Olfativo — Gestão de Perfumaria Artesanal",
+  "description": "Plataforma inteligente de gestão de insumos, fórmulas, bases, estoque e precificação de alta precisão para perfumaria artesanal.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
