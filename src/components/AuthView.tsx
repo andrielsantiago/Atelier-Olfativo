@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { ArrowRight, ShieldCheck } from 'lucide-react';
 import { signInWithPopup } from 'firebase/auth';
 import { auth, googleAuthProvider } from '../lib/firebase';
+import atelierFlaconImg from '../assets/images/atelier_flacon_showcase_1795373579845.jpg';
 
 export const AuthView: React.FC = () => {
   const [loading, setLoading] = useState(false);
@@ -20,6 +21,10 @@ export const AuthView: React.FC = () => {
       } else if (code === 'auth/popup-blocked') {
         setError(
           'O navegador bloqueou o pop-up de login. Permita pop-ups para este site e tente novamente.'
+        );
+      } else if (code === 'auth/unauthorized-domain') {
+        setError(
+          `Este domínio (${window.location.hostname}) ainda não está autorizado no Firebase Authentication. Adicione "${window.location.hostname}" em Authentication → Settings → Authorized domains no Console do Firebase.`
         );
       } else {
         setError(err?.message || 'Não foi possível autenticar com o Google.');
@@ -50,7 +55,7 @@ export const AuthView: React.FC = () => {
         <div className="my-8 lg:my-10 overflow-hidden rounded-xl border border-[#E4D8C5] bg-[#FAF7F2] aspect-[4/3] max-h-[380px] w-full">
           {!imgError ? (
             <img
-              src="/src/assets/images/atelier_flacon_showcase_1795373579845.jpg"
+              src={atelierFlaconImg}
               alt="Frasco minimalista de alta perfumaria sobre pedra travertino"
               referrerPolicy="no-referrer"
               onError={() => setImgError(true)}

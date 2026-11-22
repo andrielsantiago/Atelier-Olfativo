@@ -12,6 +12,7 @@ import {
 } from 'lucide-react';
 import { formatBRL } from '../lib/perfumeryEngine';
 import { SavedCalculationRecord } from '../types/perfumery';
+import heroAtelierImg from '../assets/images/hero_perfume_atelier_1795373580553.jpg';
 
 export type AppSection =
   | 'dashboard'
@@ -153,7 +154,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
         <div className="lg:col-span-5 min-h-[220px] lg:min-h-[280px] bg-[#E4D8C5]">
           {!heroImgErr ? (
             <img
-              src="/src/assets/images/hero_perfume_atelier_1795373580553.jpg"
+              src={heroAtelierImg}
               alt="Bancada de perfumaria artesanal com frascos de essência e pipetas"
               referrerPolicy="no-referrer"
               onError={() => setHeroImgErr(true)}
