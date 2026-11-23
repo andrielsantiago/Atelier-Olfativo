@@ -860,13 +860,18 @@ export async function saveFormulaDraft(
   const cleanDraft = stripUndefinedDeep({ ...draft, id });
 
   const safeVersion = Math.max(1, Math.round(draft.version || 1));
+  const safeInspiredBy = (
+    draft.inspiredBy.trim() ||
+    draft.perfumeName.trim() ||
+    'Criação Autoral'
+  ).slice(0, 160);
 
   try {
     if (draft.id) {
       await updateDoc(doc(db, 'users', uid, 'formulas', id), {
         brandName: (draft.brandName || '').slice(0, 140),
         perfumeName: (draft.perfumeName || '').slice(0, 160),
-        inspiredBy: draft.inspiredBy.slice(0, 160),
+        inspiredBy: safeInspiredBy,
         version: safeVersion,
         status,
         targetVolumeMl: draft.targetVolumeMl,
@@ -879,7 +884,7 @@ export async function saveFormulaDraft(
         ownerId: uid,
         brandName: (draft.brandName || '').slice(0, 140),
         perfumeName: (draft.perfumeName || '').slice(0, 160),
-        inspiredBy: draft.inspiredBy.slice(0, 160),
+        inspiredBy: safeInspiredBy,
         version: safeVersion,
         status,
         targetVolumeMl: draft.targetVolumeMl,
@@ -1033,13 +1038,18 @@ export async function saveCalculationAndDeductStock(params: {
     const cleanSnapshot = stripUndefinedDeep({ ...draft, id: formulaId });
 
     const safeVersion = Math.max(1, Math.round(draft.version || 1));
+    const safeInspiredBy = (
+      draft.inspiredBy.trim() ||
+      draft.perfumeName.trim() ||
+      'Criação Autoral'
+    ).slice(0, 160);
 
     batch.set(doc(db, 'users', uid, 'calculations', calcId), {
       ownerId: uid,
       formulaId,
       brandName: (draft.brandName || '').slice(0, 140),
       perfumeName: (draft.perfumeName || '').slice(0, 160),
-      inspiredBy: draft.inspiredBy.slice(0, 160),
+      inspiredBy: safeInspiredBy,
       formulaVersion: safeVersion,
       sizeMl: draft.targetVolumeMl,
       liquidCost: result.liquidCostTotal,
@@ -1058,7 +1068,7 @@ export async function saveCalculationAndDeductStock(params: {
       formulaId,
       brandName: draft.brandName,
       perfumeName: draft.perfumeName,
-      inspiredBy: draft.inspiredBy,
+      inspiredBy: safeInspiredBy,
       formulaVersion: safeVersion,
       sizeMl: draft.targetVolumeMl,
       liquidCost: result.liquidCostTotal,

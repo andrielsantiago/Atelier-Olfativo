@@ -586,8 +586,8 @@ export function calculatePerfumeCost(
   const duplicateWarnings: string[] = [];
   const lines: CalculationCostLine[] = [];
 
-  if (!draft.inspiredBy.trim()) {
-    errors.push('Etapa 1: o campo "Perfume inspirado em" é obrigatório.');
+  if (!draft.inspiredBy.trim() && !draft.perfumeName.trim()) {
+    errors.push('Etapa 1: informe o "Nome do perfume" ou "Perfume inspirado em".');
   }
 
   if (draft.targetVolumeMl <= 0) {

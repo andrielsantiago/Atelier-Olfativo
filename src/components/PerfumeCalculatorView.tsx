@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   ChevronDown,
   ChevronRight,
@@ -111,6 +111,14 @@ function syncQAsToBaseIngredients(
   });
 }
 
+function inferPropChoiceFromText(text?: string | null): PropChoice | undefined {
+  if (!text) return undefined;
+  const lower = text.toLowerCase();
+  if (lower.includes('propanediol')) return 'Propanediol';
+  if (lower.includes('propilenoglicol')) return 'Propilenoglicol';
+  return undefined;
+}
+
 interface PerfumeCalculatorViewProps {
   uid: string;
   draft: PerfumeFormulaDraft;
@@ -153,11 +161,42 @@ export const PerfumeCalculatorView: React.FC<PerfumeCalculatorViewProps> = ({
   onCalculationSaved,
 }) => {
   const [openStep, setOpenStep] = useState<number>(1);
+  const stepRefs = useRef<Record<number, HTMLDivElement | null>>({});
+  const scrollTargetStepRef = useRef<number | null>(null);
+  const feedbackRef = useRef<HTMLDivElement | null>(null);
   const [savingDraft, setSavingDraft] = useState(false);
   const [savingCalc, setSavingCalc] = useState(false);
   const [savingBase, setSavingBase] = useState(false);
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+
+  const navigateToStep = (stepNum: number, shouldScroll = true) => {
+    if (shouldScroll && stepNum > 0) {
+      if (openStep === stepNum) {
+        const el = stepRefs.current[stepNum];
+        if (el) {
+          el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        }
+        return;
+      }
+      scrollTargetStepRef.current = stepNum;
+    }
+    setOpenStep(stepNum);
+  };
+
+  useEffect(() => {
+    const target = scrollTargetStepRef.current;
+    if (target && openStep === target) {
+      scrollTargetStepRef.current = null;
+      const timer = window.setTimeout(() => {
+        const el = stepRefs.current[target];
+        if (el) {
+          el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        }
+      }, 30);
+      return () => window.clearTimeout(timer);
+    }
+  }, [openStep]);
 
   // Stock deduction confirmation modal
   const [confirmStockModalOpen, setConfirmStockModalOpen] = useState(false);
@@ -226,14 +265,20 @@ export const PerfumeCalculatorView: React.FC<PerfumeCalculatorViewProps> = ({
   };
 
   const stepStatuses = useMemo(() => {
-    const s1 = Boolean(draft.inspiredBy.trim() && draft.targetVolumeMl > 0);
+    const s1 = Boolean(
+      (draft.inspiredBy.trim() || draft.perfumeName.trim()) && draft.targetVolumeMl > 0
+    );
     const s2 = draft.rawMaterials.some(
       (m) =>
         m.role === 'essencia' &&
         (draft.inputMode === 'absolute' ? m.usedQty > 0 : (m.usedPercentage || 0) > 0)
     );
     const s3 = true; // QAs are optional
-    const s4 = baseEval.valid && draft.base.usedInFormulaQty > 0;
+    const baseUsedValid =
+      draft.inputMode === 'absolute'
+        ? draft.base.usedInFormulaQty > 0
+        : (draft.base.usedPercentage || 0) > 0;
+    const s4 = baseEval.valid && baseUsedValid;
     const s5 =
       draft.bottle.mode === 'complete'
         ? Boolean(draft.bottle.complete.name.trim())
@@ -367,11 +412,23 @@ export const PerfumeCalculatorView: React.FC<PerfumeCalculatorViewProps> = ({
       draft.base.mode !== 'purchased_ready'
         ? syncQAsToBaseIngredients(draft.base.ingredients, nextQAs)
         : draft.base.ingredients;
+    let nextPropChoice = draft.base.propChoice;
+    if (draft.base.mode === 'predefined' && !nextPropChoice) {
+      const matchedPropQa = nextQAs.find(
+        (qa) => inferPropChoiceFromText(qa.presetType) || inferPropChoiceFromText(qa.name)
+      );
+      if (matchedPropQa) {
+        nextPropChoice =
+          inferPropChoiceFromText(matchedPropQa.presetType) ||
+          inferPropChoiceFromText(matchedPropQa.name);
+      }
+    }
     applyDraftWithAutoBase({
       ...draft,
       qas: nextQAs,
       base: {
         ...draft.base,
+        propChoice: nextPropChoice,
         ingredients: nextBaseIngredients,
       },
     });
@@ -419,10 +476,16 @@ export const PerfumeCalculatorView: React.FC<PerfumeCalculatorViewProps> = ({
 
   const updateBaseIngredient = (idx: number, patch: Partial<BaseIngredientLine>) => {
     const next = [...draft.base.ingredients];
-    next[idx] = { ...next[idx], ...patch };
+    const updated = { ...next[idx], ...patch };
+    next[idx] = updated;
+    let nextPropChoice = draft.base.propChoice;
+    if (draft.base.mode === 'predefined' && (updated.key === 'prop' || !nextPropChoice)) {
+      const inferred = inferPropChoiceFromText(updated.name);
+      if (inferred) nextPropChoice = inferred;
+    }
     onChangeDraft({
       ...draft,
-      base: { ...draft.base, ingredients: next },
+      base: { ...draft.base, propChoice: nextPropChoice, ingredients: next },
     });
   };
 
@@ -481,9 +544,9 @@ export const PerfumeCalculatorView: React.FC<PerfumeCalculatorViewProps> = ({
 
   // Save draft formula
   const handleSaveDraft = async () => {
-    if (!draft.inspiredBy.trim()) {
-      setErrorMessage('Informe o campo "Perfume inspirado em" na Etapa 1 para salvar o rascunho.');
-      setOpenStep(1);
+    if (!draft.inspiredBy.trim() && !draft.perfumeName.trim()) {
+      setErrorMessage('Informe o "Nome do perfume" ou "Perfume inspirado em" na Etapa 1 para salvar o rascunho.');
+      navigateToStep(1);
       return;
     }
     setErrorMessage(null);
@@ -568,6 +631,9 @@ export const PerfumeCalculatorView: React.FC<PerfumeCalculatorViewProps> = ({
   const handleClickSaveCalculation = () => {
     if (!result.valid) {
       setErrorMessage(result.errors[0] || 'Corrija os campos obrigatórios antes de salvar.');
+      window.setTimeout(() => {
+        feedbackRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      }, 30);
       return;
     }
     const hasLinkedStockInsumos =
@@ -631,7 +697,7 @@ export const PerfumeCalculatorView: React.FC<PerfumeCalculatorViewProps> = ({
     return (
       <button
         type="button"
-        onClick={() => setOpenStep(isOpen ? 0 : stepNum)}
+        onClick={() => navigateToStep(isOpen ? 0 : stepNum, !isOpen)}
         className="w-full px-5 py-4 flex items-center justify-between gap-4 text-left hover:bg-[#FAF7F2]/80 transition-colors cursor-pointer"
       >
         <div className="flex items-center gap-3.5 min-w-0">
@@ -737,59 +803,67 @@ export const PerfumeCalculatorView: React.FC<PerfumeCalculatorViewProps> = ({
             <button
               key={label}
               type="button"
-              onClick={() => setOpenStep(i + 1)}
-              className={`px-2.5 py-1 rounded-md text-[11px] font-medium transition-colors cursor-pointer whitespace-nowrap ${
+              onClick={() => navigateToStep(i + 1)}
+              className={`px-2.5 py-1 rounded-md text-[11px] font-medium transition-colors cursor-pointer whitespace-nowrap inline-flex items-center gap-1 ${
                 openStep === i + 1
                   ? 'bg-[#171412] text-[#FAF7F2]'
                   : stepStatuses[i]
-                    ? 'bg-[#F2ECE1] text-[#3B2B20]'
+                    ? 'bg-[#F2ECE1] text-[#3B2B20] border border-[#B08D57]/40'
                     : 'bg-[#FAF7F2] text-[#8C7A68] border border-[#E4D8C5]'
               }`}
             >
-              {label}
+              {stepStatuses[i] && <CheckCircle2 className="w-3 h-3 shrink-0" />}
+              <span>{label}</span>
             </button>
           ))}
         </div>
       </div>
 
-      {errorMessage && (
-        <div className="p-4 rounded-xl border border-[#9E3B33]/30 bg-[#9E3B33]/5 text-xs text-[#7A2720] flex items-center justify-between gap-4 no-print">
-          <div className="flex items-center gap-2">
-            <AlertTriangle className="w-4 h-4 shrink-0" />
-            <span>{errorMessage}</span>
+      <div ref={feedbackRef} className="space-y-2 no-print">
+        {errorMessage && (
+          <div className="p-4 rounded-xl border border-[#9E3B33]/30 bg-[#9E3B33]/5 text-xs text-[#7A2720] flex items-center justify-between gap-4">
+            <div className="flex items-center gap-2">
+              <AlertTriangle className="w-4 h-4 shrink-0" />
+              <span>{errorMessage}</span>
+            </div>
+            <button
+              type="button"
+              onClick={() => setErrorMessage(null)}
+              className="underline cursor-pointer"
+            >
+              Fechar
+            </button>
           </div>
-          <button
-            type="button"
-            onClick={() => setErrorMessage(null)}
-            className="underline cursor-pointer"
-          >
-            Fechar
-          </button>
-        </div>
-      )}
+        )}
 
-      {statusMessage && (
-        <div className="p-4 rounded-xl border border-[#B08D57]/40 bg-[#F2ECE1] text-xs text-[#3B2B20] flex items-center justify-between gap-4 no-print">
-          <span>{statusMessage}</span>
-          <button
-            type="button"
-            onClick={() => setStatusMessage(null)}
-            className="underline cursor-pointer"
-          >
-            Fechar
-          </button>
-        </div>
-      )}
+        {statusMessage && (
+          <div className="p-4 rounded-xl border border-[#B08D57]/40 bg-[#F2ECE1] text-xs text-[#3B2B20] flex items-center justify-between gap-4">
+            <span>{statusMessage}</span>
+            <button
+              type="button"
+              onClick={() => setStatusMessage(null)}
+              className="underline cursor-pointer"
+            >
+              Fechar
+            </button>
+          </div>
+        )}
+      </div>
 
       {/* Main Layout: Accordion Steps + Sticky Summary Sidebar */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
         <div className="lg:col-span-8 space-y-4">
           {/* ETAPA 1 — IDENTIFICAÇÃO */}
-          <div className="rounded-xl border border-[#E4D8C5] bg-white overflow-hidden no-print">
+          <div
+            ref={(el) => {
+              stepRefs.current[1] = el;
+            }}
+            className="scroll-mt-4 rounded-xl border border-[#E4D8C5] bg-white overflow-hidden no-print"
+          >
             {renderAccordionHeader(
               1,
               'Etapa 1 — Identificação',
-              draft.inspiredBy
+              draft.perfumeName || draft.inspiredBy
                 ? `${draft.perfumeName || draft.inspiredBy} · ${draft.targetVolumeMl} ml`
                 : 'Marca, nome do perfume e inspiração olfativa',
               stepStatuses[0]
@@ -814,7 +888,7 @@ export const PerfumeCalculatorView: React.FC<PerfumeCalculatorViewProps> = ({
                   </div>
                   <div>
                     <label className="block text-xs font-medium text-[#5C4332] mb-1">
-                      Nome do perfume (opcional)
+                      Nome do perfume
                     </label>
                     <input
                       type="text"
@@ -828,7 +902,7 @@ export const PerfumeCalculatorView: React.FC<PerfumeCalculatorViewProps> = ({
                   </div>
                   <div className="sm:col-span-2">
                     <label className="block text-xs font-medium text-[#5C4332] mb-1">
-                      Perfume inspirado em *
+                      Perfume inspirado em (ou deixe em branco se informou o Nome acima)
                     </label>
                     <input
                       type="text"
@@ -1017,7 +1091,7 @@ export const PerfumeCalculatorView: React.FC<PerfumeCalculatorViewProps> = ({
                 <div className="flex justify-end pt-2">
                   <button
                     type="button"
-                    onClick={() => setOpenStep(2)}
+                    onClick={() => navigateToStep(2)}
                     className="px-4 py-2 rounded-lg bg-[#171412] text-[#FAF7F2] text-xs font-medium inline-flex items-center gap-1.5 cursor-pointer"
                   >
                     <span>Avançar para Matérias-primas</span>
@@ -1029,7 +1103,12 @@ export const PerfumeCalculatorView: React.FC<PerfumeCalculatorViewProps> = ({
           </div>
 
           {/* ETAPA 2 — MATÉRIAS-PRIMAS */}
-          <div className="rounded-xl border border-[#E4D8C5] bg-white overflow-hidden no-print">
+          <div
+            ref={(el) => {
+              stepRefs.current[2] = el;
+            }}
+            className="scroll-mt-4 rounded-xl border border-[#E4D8C5] bg-white overflow-hidden no-print"
+          >
             {renderAccordionHeader(
               2,
               'Etapa 2 — Matérias-primas',
@@ -1433,7 +1512,7 @@ export const PerfumeCalculatorView: React.FC<PerfumeCalculatorViewProps> = ({
                 <div className="flex justify-between pt-2">
                   <button
                     type="button"
-                    onClick={() => setOpenStep(1)}
+                    onClick={() => navigateToStep(1)}
                     className="px-4 py-2 rounded-lg border border-[#D8CBB8] text-xs text-[#5C4332] inline-flex items-center gap-1.5 cursor-pointer"
                   >
                     <ArrowLeft className="w-3.5 h-3.5" />
@@ -1441,7 +1520,7 @@ export const PerfumeCalculatorView: React.FC<PerfumeCalculatorViewProps> = ({
                   </button>
                   <button
                     type="button"
-                    onClick={() => setOpenStep(3)}
+                    onClick={() => navigateToStep(3)}
                     className="px-4 py-2 rounded-lg bg-[#171412] text-[#FAF7F2] text-xs font-medium inline-flex items-center gap-1.5 cursor-pointer"
                   >
                     <span>Avançar para QAs e Aditivos</span>
@@ -1453,7 +1532,12 @@ export const PerfumeCalculatorView: React.FC<PerfumeCalculatorViewProps> = ({
           </div>
 
           {/* ETAPA 3 — QAs E ADITIVOS (VALORES PARA A BASE) */}
-          <div className="rounded-xl border border-[#E4D8C5] bg-white overflow-hidden no-print">
+          <div
+            ref={(el) => {
+              stepRefs.current[3] = el;
+            }}
+            className="scroll-mt-4 rounded-xl border border-[#E4D8C5] bg-white overflow-hidden no-print"
+          >
             {renderAccordionHeader(
               3,
               'Etapa 3 — QAs e Aditivos',
@@ -1824,7 +1908,7 @@ export const PerfumeCalculatorView: React.FC<PerfumeCalculatorViewProps> = ({
                 <div className="flex justify-between pt-2">
                   <button
                     type="button"
-                    onClick={() => setOpenStep(2)}
+                    onClick={() => navigateToStep(2)}
                     className="px-4 py-2 rounded-lg border border-[#D8CBB8] text-xs text-[#5C4332] inline-flex items-center gap-1.5 cursor-pointer"
                   >
                     <ArrowLeft className="w-3.5 h-3.5" />
@@ -1832,7 +1916,7 @@ export const PerfumeCalculatorView: React.FC<PerfumeCalculatorViewProps> = ({
                   </button>
                   <button
                     type="button"
-                    onClick={() => setOpenStep(4)}
+                    onClick={() => navigateToStep(4)}
                     className="px-4 py-2 rounded-lg bg-[#171412] text-[#FAF7F2] text-xs font-medium inline-flex items-center gap-1.5 cursor-pointer"
                   >
                     <span>Avançar para Base</span>
@@ -1844,7 +1928,12 @@ export const PerfumeCalculatorView: React.FC<PerfumeCalculatorViewProps> = ({
           </div>
 
           {/* ETAPA 4 — GERENCIAMENTO DE BASES */}
-          <div className="rounded-xl border border-[#E4D8C5] bg-white overflow-hidden no-print">
+          <div
+            ref={(el) => {
+              stepRefs.current[4] = el;
+            }}
+            className="scroll-mt-4 rounded-xl border border-[#E4D8C5] bg-white overflow-hidden no-print"
+          >
             {renderAccordionHeader(
               4,
               'Etapa 4 — Gerenciamento de Bases (Obrigatória)',
@@ -1974,10 +2063,23 @@ export const PerfumeCalculatorView: React.FC<PerfumeCalculatorViewProps> = ({
                     </div>
 
                     {/* MANDATORY Propanediol / Propilenoglicol choice */}
-                    <div className="p-4 rounded-lg border border-[#B08D57]/50 bg-[#F2ECE1]/70">
-                      <p className="text-xs font-semibold text-[#171412]">
-                        Escolha obrigatória do veículo umectante na base *
-                      </p>
+                    <div
+                      className={`p-4 rounded-lg border ${
+                        !draft.base.propChoice
+                          ? 'border-[#9E3B33]/50 bg-[#9E3B33]/5'
+                          : 'border-[#B08D57]/50 bg-[#F2ECE1]/70'
+                      }`}
+                    >
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <p className="text-xs font-semibold text-[#171412]">
+                          Escolha obrigatória do veículo umectante na base *
+                        </p>
+                        {!draft.base.propChoice && (
+                          <span className="text-[11px] font-medium text-[#9E3B33]">
+                            Selecione uma opção para concluir a Etapa 4
+                          </span>
+                        )}
+                      </div>
                       <p className="text-[11px] text-[#5C4332] mt-0.5 mb-2.5">
                         Todas as bases predefinidas do grupo exigem definir entre
                         Propanediol ou Propilenoglicol:
@@ -2756,10 +2858,26 @@ export const PerfumeCalculatorView: React.FC<PerfumeCalculatorViewProps> = ({
                   </div>
                 )}
 
+                {(!baseEval.valid ||
+                  (draft.inputMode === 'absolute'
+                    ? draft.base.usedInFormulaQty <= 0
+                    : (draft.base.usedPercentage || 0) <= 0)) && (
+                  <div className="rounded-lg border border-[#9E3B33]/30 bg-[#9E3B33]/5 p-3 text-xs text-[#7A2720] space-y-1">
+                    {baseEval.errors.map((err, i) => (
+                      <div key={i}>• {err}</div>
+                    ))}
+                    {(draft.inputMode === 'absolute'
+                      ? draft.base.usedInFormulaQty <= 0
+                      : (draft.base.usedPercentage || 0) <= 0) && (
+                      <div>• Informe a quantidade (ou %) da Base utilizada no perfume.</div>
+                    )}
+                  </div>
+                )}
+
                 <div className="flex justify-between pt-2">
                   <button
                     type="button"
-                    onClick={() => setOpenStep(3)}
+                    onClick={() => navigateToStep(3)}
                     className="px-4 py-2 rounded-lg border border-[#D8CBB8] text-xs text-[#5C4332] inline-flex items-center gap-1.5 cursor-pointer"
                   >
                     <ArrowLeft className="w-3.5 h-3.5" />
@@ -2767,7 +2885,7 @@ export const PerfumeCalculatorView: React.FC<PerfumeCalculatorViewProps> = ({
                   </button>
                   <button
                     type="button"
-                    onClick={() => setOpenStep(5)}
+                    onClick={() => navigateToStep(5)}
                     className="px-4 py-2 rounded-lg bg-[#171412] text-[#FAF7F2] text-xs font-medium inline-flex items-center gap-1.5 cursor-pointer"
                   >
                     <span>Avançar para Frasco</span>
@@ -2779,7 +2897,12 @@ export const PerfumeCalculatorView: React.FC<PerfumeCalculatorViewProps> = ({
           </div>
 
           {/* ETAPA 5 — FRASCO E COMPONENTES */}
-          <div className="rounded-xl border border-[#E4D8C5] bg-white overflow-hidden no-print">
+          <div
+            ref={(el) => {
+              stepRefs.current[5] = el;
+            }}
+            className="scroll-mt-4 rounded-xl border border-[#E4D8C5] bg-white overflow-hidden no-print"
+          >
             {renderAccordionHeader(
               5,
               'Etapa 5 — Frasco e Componentes (Obrigatória)',
@@ -3762,7 +3885,7 @@ export const PerfumeCalculatorView: React.FC<PerfumeCalculatorViewProps> = ({
                 <div className="flex justify-between pt-2">
                   <button
                     type="button"
-                    onClick={() => setOpenStep(4)}
+                    onClick={() => navigateToStep(4)}
                     className="px-4 py-2 rounded-lg border border-[#D8CBB8] text-xs text-[#5C4332] inline-flex items-center gap-1.5 cursor-pointer"
                   >
                     <ArrowLeft className="w-3.5 h-3.5" />
@@ -3770,7 +3893,7 @@ export const PerfumeCalculatorView: React.FC<PerfumeCalculatorViewProps> = ({
                   </button>
                   <button
                     type="button"
-                    onClick={() => setOpenStep(6)}
+                    onClick={() => navigateToStep(6)}
                     className="px-4 py-2 rounded-lg bg-[#171412] text-[#FAF7F2] text-xs font-medium inline-flex items-center gap-1.5 cursor-pointer"
                   >
                     <span>Avançar para Embalagens</span>
@@ -3782,7 +3905,12 @@ export const PerfumeCalculatorView: React.FC<PerfumeCalculatorViewProps> = ({
           </div>
 
           {/* ETAPA 6 — EMBALAGEM E ACABAMENTO */}
-          <div className="rounded-xl border border-[#E4D8C5] bg-white overflow-hidden no-print">
+          <div
+            ref={(el) => {
+              stepRefs.current[6] = el;
+            }}
+            className="scroll-mt-4 rounded-xl border border-[#E4D8C5] bg-white overflow-hidden no-print"
+          >
             {renderAccordionHeader(
               6,
               'Etapa 6 — Embalagem e Acabamento (Opcional)',
@@ -3999,7 +4127,7 @@ export const PerfumeCalculatorView: React.FC<PerfumeCalculatorViewProps> = ({
                 <div className="flex justify-between pt-2">
                   <button
                     type="button"
-                    onClick={() => setOpenStep(5)}
+                    onClick={() => navigateToStep(5)}
                     className="px-4 py-2 rounded-lg border border-[#D8CBB8] text-xs text-[#5C4332] inline-flex items-center gap-1.5 cursor-pointer"
                   >
                     <ArrowLeft className="w-3.5 h-3.5" />
@@ -4007,7 +4135,7 @@ export const PerfumeCalculatorView: React.FC<PerfumeCalculatorViewProps> = ({
                   </button>
                   <button
                     type="button"
-                    onClick={() => setOpenStep(7)}
+                    onClick={() => navigateToStep(7)}
                     className="px-4 py-2 rounded-lg bg-[#171412] text-[#FAF7F2] text-xs font-medium inline-flex items-center gap-1.5 cursor-pointer"
                   >
                     <span>Ver Resultado Final</span>
@@ -4019,7 +4147,12 @@ export const PerfumeCalculatorView: React.FC<PerfumeCalculatorViewProps> = ({
           </div>
 
           {/* ETAPA 7 — RESULTADO FINAL, SIMULADOR DE TAMANHOS & PRECIFICAÇÃO */}
-          <div className="rounded-xl border border-[#E4D8C5] bg-white overflow-hidden print-only-clean">
+          <div
+            ref={(el) => {
+              stepRefs.current[7] = el;
+            }}
+            className="scroll-mt-4 rounded-xl border border-[#E4D8C5] bg-white overflow-hidden print-only-clean"
+          >
             {renderAccordionHeader(
               7,
               'Etapa 7 — Resultado Final, Tamanhos e Preço de Venda',
@@ -4613,11 +4746,53 @@ export const PerfumeCalculatorView: React.FC<PerfumeCalculatorViewProps> = ({
                   )}
                 </div>
 
+                {/* Final Save CTA Card + Action Buttons */}
+                <div className="rounded-xl border border-[#B08D57]/50 bg-[#F2ECE1] p-4 space-y-3 no-print">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                    <div>
+                      <p className="text-sm font-semibold text-[#171412]">
+                        {isCurrentCalcSaved
+                          ? 'Cálculo salvo em Minhas Fórmulas e Histórico'
+                          : 'Finalizou seu perfume?'}
+                      </p>
+                      <p className="text-xs text-[#5C4332]">
+                        Salve este cálculo para registrar a fórmula, consultar depois no histórico ou baixar do estoque.
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={handleClickSaveCalculation}
+                      disabled={savingCalc}
+                      className="w-full sm:w-auto px-5 py-2.5 rounded-lg bg-[#171412] text-[#FAF7F2] text-xs font-semibold hover:bg-[#3B2B20] inline-flex items-center justify-center gap-2 cursor-pointer shrink-0"
+                    >
+                      <CheckCircle2 className="w-4 h-4" />
+                      <span>
+                        {savingCalc
+                          ? 'Salvando cálculo...'
+                          : isCurrentCalcSaved
+                            ? 'Salvo (salvar novamente)'
+                            : 'Salvar este cálculo'}
+                      </span>
+                    </button>
+                  </div>
+
+                  {errorMessage && (
+                    <div className="p-2.5 rounded-lg bg-[#9E3B33]/10 border border-[#9E3B33]/30 text-xs text-[#7A2720]">
+                      {errorMessage}
+                    </div>
+                  )}
+                  {statusMessage && (
+                    <div className="p-2.5 rounded-lg bg-white border border-[#B08D57]/40 text-xs text-[#3B2B20]">
+                      {statusMessage}
+                    </div>
+                  )}
+                </div>
+
                 {/* Final Action Buttons */}
                 <div className="flex flex-wrap items-center justify-between gap-3 pt-2 border-t border-[#E4D8C5] no-print">
                   <button
                     type="button"
-                    onClick={() => setOpenStep(6)}
+                    onClick={() => navigateToStep(6)}
                     className="px-4 py-2 rounded-lg border border-[#D8CBB8] text-xs text-[#5C4332] inline-flex items-center gap-1.5 cursor-pointer"
                   >
                     <ArrowLeft className="w-3.5 h-3.5" />
@@ -4804,6 +4979,22 @@ export const PerfumeCalculatorView: React.FC<PerfumeCalculatorViewProps> = ({
                 ))}
               </div>
             )}
+
+            <button
+              type="button"
+              onClick={handleClickSaveCalculation}
+              disabled={savingCalc}
+              className="w-full py-2.5 px-4 rounded-lg bg-[#171412] text-[#FAF7F2] text-xs font-semibold hover:bg-[#3B2B20] inline-flex items-center justify-center gap-2 cursor-pointer"
+            >
+              <CheckCircle2 className="w-4 h-4" />
+              <span>
+                {savingCalc
+                  ? 'Salvando...'
+                  : isCurrentCalcSaved
+                    ? 'Salvo no histórico'
+                    : 'Salvar cálculo'}
+              </span>
+            </button>
           </div>
         </aside>
       </div>

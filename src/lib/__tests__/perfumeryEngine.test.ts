@@ -567,4 +567,17 @@ describe('Motor Matemático de Perfumaria Artesanal', () => {
       3
     );
   });
+
+  it('16. Valida identificação na Etapa 1 com Nome do perfume mesmo sem preencher Inspirado em', () => {
+    const draft = createBaseDraft();
+    draft.inspiredBy = '';
+    draft.perfumeName = 'Criação Autoral Nº 1';
+
+    const resValid = calculatePerfumeCost(draft);
+    expect(resValid.valid).toBe(true);
+
+    draft.perfumeName = '   ';
+    const resInvalid = calculatePerfumeCost(draft);
+    expect(resInvalid.valid).toBe(false);
+  });
 });
