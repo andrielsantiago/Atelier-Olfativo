@@ -1,5 +1,6 @@
 import { User } from 'firebase/auth';
 import {
+  FieldValue,
   Timestamp,
   collection,
   deleteDoc,
@@ -53,13 +54,24 @@ function toIsoString(val: unknown): string {
 }
 
 /**
- * Strips `undefined` recursively from objects/arrays because Firestore rejects `undefined`.
+ * Strips `undefined` recursively from plain objects/arrays because Firestore rejects `undefined`.
+ * Preserves Firestore sentinels (`FieldValue` such as `serverTimestamp()`) and `Timestamp`/`Date` instances.
  */
-function stripUndefinedDeep<T>(value: T): T {
+export function stripUndefinedDeep<T>(value: T): T {
   if (Array.isArray(value)) {
     return value.map((item) => stripUndefinedDeep(item)) as unknown as T;
   }
-  if (value !== null && typeof value === 'object' && !(value instanceof Timestamp)) {
+  if (
+    value !== null &&
+    typeof value === 'object' &&
+    !(value instanceof Timestamp) &&
+    !(value instanceof FieldValue) &&
+    !(value instanceof Date)
+  ) {
+    const proto = Object.getPrototypeOf(value);
+    if (proto !== Object.prototype && proto !== null) {
+      return value;
+    }
     const out: Record<string, unknown> = {};
     for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
       if (v !== undefined) {

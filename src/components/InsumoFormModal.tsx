@@ -146,6 +146,20 @@ export const InsumoFormModal: React.FC<InsumoFormModalProps> = ({
       setError('Quantidade comprada deve ser maior que zero.');
       return;
     }
+    const parsedDensity = density.trim() !== '' ? Number(density) : null;
+    const parsedConcentration = concentration.trim() !== '' ? Number(concentration) : null;
+    if (parsedDensity !== null && (!Number.isFinite(parsedDensity) || parsedDensity < 0 || parsedDensity > 50)) {
+      setError('A densidade deve ser um valor entre 0,001 e 50 g/ml.');
+      return;
+    }
+    if (
+      parsedConcentration !== null &&
+      (!Number.isFinite(parsedConcentration) || parsedConcentration < 0 || parsedConcentration > 100)
+    ) {
+      setError('A concentração deve ser um valor entre 0,001% e 100%.');
+      return;
+    }
+
     setSaving(true);
     try {
       const payload = {
@@ -161,12 +175,13 @@ export const InsumoFormModal: React.FC<InsumoFormModalProps> = ({
         purchasePrice: priceNum,
         freight: freightNum,
         purchaseDate,
-        density: density ? Number(density) : null,
-        concentration: concentration ? Number(concentration) : null,
+        density: parsedDensity && parsedDensity > 0 ? parsedDensity : null,
+        concentration:
+          parsedConcentration && parsedConcentration > 0 ? parsedConcentration : null,
         stockEnabled,
-        stockQty: stockQty !== '' ? Number(stockQty) : qtyNum,
+        stockQty: Math.max(0, stockQty !== '' ? Number(stockQty) || 0 : qtyNum),
         stockUsed: editingInsumo ? editingInsumo.stockUsed : 0,
-        stockMinAlert: Number(stockMinAlert) || 0,
+        stockMinAlert: Math.max(0, Number(stockMinAlert) || 0),
         notes: notes.trim(),
       };
 
