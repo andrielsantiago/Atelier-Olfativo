@@ -382,7 +382,7 @@ describe('Motor Matemático de Perfumaria Artesanal', () => {
     expect(markupRes.effectiveMarginPercent).toBeCloseTo(40, 4);
   });
 
-  it('11. Calcula rendimento do lote por concentração da essência (100ml a 26% -> 384,6ml total e 284,6ml base) e custo unitário por frasco de 50ml', () => {
+  it('11. Calcula rendimento do lote por concentração da essência (100ml a 26% -> 384,6ml total) absorvendo sobra por padrão e permitindo desativar', () => {
     const draft = createBaseDraft();
     draft.targetVolumeMl = 50; // Frascos de 50ml
     draft.essenceConcentrationPct = 26;
@@ -391,6 +391,7 @@ describe('Motor Matemático de Perfumaria Artesanal', () => {
     // Base a R$ 0.049/ml -> 284.6154ml * 0.049 = R$ 13.9462
     draft.base.usedInFormulaQty = 284.615385;
 
+    // 1) Padrão: includeLeftoverInLiquidCost = true -> absorve sobra (~34,6ml) nos 7 frascos (350ml)
     const res = calculatePerfumeCost(draft);
     expect(res.valid).toBe(true);
     expect(res.batchSummary).not.toBeNull();
@@ -398,17 +399,34 @@ describe('Motor Matemático de Perfumaria Artesanal', () => {
     expect(res.batchSummary!.batchVolumeMl).toBeCloseTo(384.615, 2);
     expect(res.batchSummary!.baseNeededMl).toBeCloseTo(284.615, 2);
     expect(res.batchSummary!.bottlesCount).toBe(7); // floor(384.615 / 50) = 7 frascos
+    expect(res.batchSummary!.totalBottledMl).toBeCloseTo(350, 2);
+    expect(res.batchSummary!.leftoverMl).toBeCloseTo(34.615, 2);
+    expect(res.batchSummary!.includeLeftoverInLiquidCost).toBe(true);
 
-    // Custo líquido por frasco de 50ml = (200 + 13.94615) * (50 / 384.615385) = 27.813
-    const expectedLiquidPer50ml = (200 + 284.615385 * 0.049) * (50 / 384.615385);
-    expect(res.liquidCostTotal).toBeCloseTo(expectedLiquidPer50ml, 3);
-    expect(res.unitCostTotal).toBeCloseTo(expectedLiquidPer50ml + 10.5, 3);
+    const totalBatchLiquid = 200 + 284.615385 * 0.049;
+    // Com absorção da sobra: cada um dos 7 frascos de 50ml recebe 50/350 = 1/7 do lote
+    const expectedLiquidWithLeftover = totalBatchLiquid * (50 / 350);
+    expect(res.liquidCostTotal).toBeCloseTo(expectedLiquidWithLeftover, 3);
+    expect(res.liquidCostTotal * 7).toBeCloseTo(res.batchSummary!.batchLiquidCostTotal, 3);
+    expect(res.unitCostTotal).toBeCloseTo(expectedLiquidWithLeftover + 10.5, 3);
 
-    // Simulador de 50ml bate exatamente com unitCostTotal
     const row50 = res.sizeComparisons.find((r) => r.sizeMl === 50)!;
     expect(row50.essenceQty).toBeCloseTo(13, 3); // 26% de 50ml
     expect(row50.baseQty).toBeCloseTo(37, 3); // 74% de 50ml
-    expect(row50.unitCost).toBeCloseTo(res.unitCostTotal, 4);
+    // Simulador puro + parcela da sobra absorvida = unitCostTotal
+    expect(row50.unitCost + res.batchSummary!.leftoverAbsorbedPerPrimaryUnit).toBeCloseTo(
+      res.unitCostTotal,
+      3
+    );
+
+    // 2) Desativando includeLeftoverInLiquidCost: rateio puramente proporcional ao volume total (384,615 ml)
+    const draftNoLeftover = { ...draft, includeLeftoverInLiquidCost: false };
+    const resNoLeftover = calculatePerfumeCost(draftNoLeftover);
+    const expectedLiquidPure = totalBatchLiquid * (50 / 384.615385);
+    expect(resNoLeftover.liquidCostTotal).toBeCloseTo(expectedLiquidPure, 3);
+    expect(resNoLeftover.batchSummary!.leftoverAbsorbedPerPrimaryUnit).toBe(0);
+    const row50Pure = resNoLeftover.sizeComparisons.find((r) => r.sizeMl === 50)!;
+    expect(row50Pure.unitCost).toBeCloseTo(resNoLeftover.unitCostTotal, 4);
   });
 
   it('12. Mantém QAs da Etapa 3 apenas como valores de referência quando addToPerfume=false', () => {
@@ -489,6 +507,64 @@ describe('Motor Matemático de Perfumaria Artesanal', () => {
     expect(res.batchSummary!.totalBatchCostWithBottles).toBeCloseTo(
       res.batchSummary!.batchLiquidCostTotal + 7 * 10.5,
       4
+    );
+  });
+
+  it('15. Combina múltiplos tamanhos de frasco no mesmo lote (ex.: 50ml + 30ml) e distribui sobra proporcionalmente', () => {
+    const draft = createBaseDraft();
+    // 100ml essência a 27% -> 370.3704ml total (270.3704ml base)
+    draft.targetVolumeMl = 50;
+    draft.essenceConcentrationPct = 27;
+    draft.autoCalcBaseFromEssence = true;
+    draft.rawMaterials[0].usedQty = 100;
+    draft.base.usedInFormulaQty = 270.37037;
+    draft.includeLeftoverInLiquidCost = true;
+    // Aproveita 2 frascos de 30ml (60ml) -> sobra 310.37ml -> 6 frascos de 50ml (300ml) -> 360ml envasados e 10.37ml sobra
+    draft.additionalBottles = [
+      {
+        id: 'ab-30',
+        capacityMl: 30,
+        fillCount: 2,
+        insumoId: null,
+        name: 'Frasco 30ml Âmbar',
+        purchasedQty: 10,
+        purchasePrice: 60,
+        freight: 0, // R$ 6,00/un
+        usedQty: 1,
+      },
+    ];
+
+    const res = calculatePerfumeCost(draft);
+    expect(res.valid).toBe(true);
+    expect(res.batchSummary).not.toBeNull();
+    const bs = res.batchSummary!;
+
+    expect(bs.primaryBottleFillCount).toBe(6);
+    expect(bs.bottlesCount).toBe(8); // 6x 50ml + 2x 30ml
+    expect(bs.totalBottledMl).toBeCloseTo(360, 2);
+    expect(bs.leftoverMl).toBeCloseTo(10.37037, 2);
+    expect(bs.allocations).toHaveLength(2);
+
+    const alloc50 = bs.allocations.find((a) => a.isPrimary)!;
+    const alloc30 = bs.allocations.find((a) => !a.isPrimary)!;
+    expect(alloc50.capacityMl).toBe(50);
+    expect(alloc50.fillCount).toBe(6);
+    expect(alloc30.capacityMl).toBe(30);
+    expect(alloc30.fillCount).toBe(2);
+    expect(alloc30.bottleOnlyCostPerUnit).toBeCloseTo(6, 4);
+    expect(alloc30.packagingItemsCostPerUnit).toBeCloseTo(0.5, 4); // Etiqueta da Etapa 6
+
+    // 100% do custo do líquido do lote (incluindo os 10.37ml de sobra) é absorvido pelos 8 frascos proporcionalmente ao volume
+    const summedLiquidAcrossBottles =
+      alloc50.fillCount * alloc50.liquidCostPerUnit +
+      alloc30.fillCount * alloc30.liquidCostPerUnit;
+    expect(summedLiquidAcrossBottles).toBeCloseTo(bs.batchLiquidCostTotal, 3);
+
+    // Custo total do lote = líquido total + (6 * 10,50) + (2 * 6,50)
+    expect(bs.batchPackagingCostTotal).toBeCloseTo(6 * 10.5 + 2 * 6.5, 4);
+    expect(bs.totalBatchCostWithBottles).toBeCloseTo(
+      bs.batchLiquidCostTotal + bs.batchPackagingCostTotal,
+      3
     );
   });
 });

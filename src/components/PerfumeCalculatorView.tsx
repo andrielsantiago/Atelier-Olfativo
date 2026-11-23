@@ -34,6 +34,7 @@ import {
   roundQuantity,
 } from '../lib/perfumeryEngine';
 import {
+  AdditionalBottleOption,
   BaseIngredientLine,
   FormulaQAInput,
   Insumo,
@@ -178,6 +179,14 @@ export const PerfumeCalculatorView: React.FC<PerfumeCalculatorViewProps> = ({
   // Save custom base name prompt
   const [customBaseSaveName, setCustomBaseSaveName] = useState('');
   const [showSaveBaseBox, setShowSaveBaseBox] = useState(false);
+
+  // Track last saved calculation signature to avoid duplicate saves on repeated PDF exports
+  const [lastSavedSignature, setLastSavedSignature] = useState<string | null>(null);
+  const draftSignature = useMemo(
+    () => JSON.stringify({ ...draft, id: undefined }),
+    [draft]
+  );
+  const isCurrentCalcSaved = lastSavedSignature === draftSignature;
 
   const result = useMemo(
     () => calculatePerfumeCost(draft, insumos),
@@ -508,7 +517,9 @@ export const PerfumeCalculatorView: React.FC<PerfumeCalculatorViewProps> = ({
         deductStock,
         batchUnits: Math.max(1, Number(batchUnitsToDeduct) || 1),
       });
-      onChangeDraft({ ...draft, id: saved.formulaId ?? draft.id });
+      const updatedDraft = { ...draft, id: saved.formulaId ?? draft.id };
+      onChangeDraft(updatedDraft);
+      setLastSavedSignature(JSON.stringify({ ...updatedDraft, id: undefined }));
       setStatusMessage(
         deductStock
           ? 'Cálculo salvo no histórico e estoque atualizado.'
@@ -522,6 +533,38 @@ export const PerfumeCalculatorView: React.FC<PerfumeCalculatorViewProps> = ({
     }
   };
 
+  const handleGeneratePdf = async () => {
+    generatePerfumePdfReport({ draft, result });
+    if (result.valid && !savingCalc && lastSavedSignature !== draftSignature) {
+      setErrorMessage(null);
+      setSavingCalc(true);
+      try {
+        const saved = await saveCalculationAndDeductStock({
+          uid,
+          draft,
+          insumos,
+          deductStock: false,
+          batchUnits: result.batchSummary?.isBatch
+            ? Math.max(1, result.batchSummary.bottlesCount)
+            : 1,
+        });
+        const updatedDraft = { ...draft, id: saved.formulaId ?? draft.id };
+        onChangeDraft(updatedDraft);
+        setLastSavedSignature(JSON.stringify({ ...updatedDraft, id: undefined }));
+        setStatusMessage(
+          'PDF gerado e cálculo salvo automaticamente em Minhas Fórmulas e Histórico.'
+        );
+        onCalculationSaved(saved);
+      } catch (err: any) {
+        setErrorMessage(
+          `PDF gerado, mas houve erro ao salvar automaticamente: ${err?.message || 'erro desconhecido'}`
+        );
+      } finally {
+        setSavingCalc(false);
+      }
+    }
+  };
+
   const handleClickSaveCalculation = () => {
     if (!result.valid) {
       setErrorMessage(result.errors[0] || 'Corrija os campos obrigatórios antes de salvar.');
@@ -529,11 +572,16 @@ export const PerfumeCalculatorView: React.FC<PerfumeCalculatorViewProps> = ({
     }
     const hasLinkedStockInsumos =
       stockModuleEnabled &&
-      result.lines.some((l) => {
+      (result.lines.some((l) => {
         if (!l.insumoId) return false;
         const ins = insumos.find((i) => i.id === l.insumoId);
         return Boolean(ins?.stockEnabled);
-      });
+      }) ||
+        (draft.additionalBottles || []).some((ab) => {
+          if (!ab.insumoId || ab.fillCount <= 0) return false;
+          const ins = insumos.find((i) => i.id === ab.insumoId);
+          return Boolean(ins?.stockEnabled);
+        }));
 
     if (hasLinkedStockInsumos) {
       if (result.batchSummary?.isBatch && result.batchSummary.bottlesCount >= 1) {
@@ -633,7 +681,12 @@ export const PerfumeCalculatorView: React.FC<PerfumeCalculatorViewProps> = ({
           </h1>
         </div>
 
-        <div className="flex items-center gap-2.5">
+        <div className="flex flex-wrap items-center gap-2.5">
+          {isCurrentCalcSaved && (
+            <span className="text-[11px] font-medium text-[#3B6E4C] bg-[#3B6E4C]/10 border border-[#3B6E4C]/30 px-2.5 py-1 rounded-md">
+              Salvo no histórico
+            </span>
+          )}
           <button
             type="button"
             onClick={handleSaveDraft}
@@ -3275,6 +3328,437 @@ export const PerfumeCalculatorView: React.FC<PerfumeCalculatorViewProps> = ({
                   </div>
                 )}
 
+                {/* Multi-bottle Batch Planning & Leftover Absorption */}
+                {(() => {
+                  const additionalList = draft.additionalBottles || [];
+                  const batchSum = result.batchSummary;
+                  const showMultiPanel =
+                    Boolean(batchSum?.isBatch) || additionalList.length > 0;
+
+                  const handleAddAdditionalBottle = (presetMl: number) => {
+                    const matched = packagingInsumos.find((ins) => {
+                      const n = ins.name.toLowerCase();
+                      return (
+                        n.includes(`${presetMl}ml`) || n.includes(`${presetMl} ml`)
+                      );
+                    });
+                    const remainingMl = batchSum ? batchSum.leftoverMl : 0;
+                    const suggestedFill =
+                      remainingMl >= presetMl
+                        ? Math.max(1, Math.floor(remainingMl / presetMl))
+                        : 1;
+                    const nextItem: AdditionalBottleOption = {
+                      id: `add-bot-${Date.now()}-${Math.random().toString(36).slice(2, 5)}`,
+                      insumoId: matched ? matched.id : null,
+                      name: matched ? matched.name : `Frasco ${presetMl} ml`,
+                      capacityMl: presetMl,
+                      purchasedQty: matched ? matched.purchasedQty : 10,
+                      purchasePrice: matched ? matched.purchasePrice : 0,
+                      freight: matched ? matched.freight : 0,
+                      usedQty: 1,
+                      fillCount: suggestedFill,
+                    };
+                    onChangeDraft({
+                      ...draft,
+                      additionalBottles: [...additionalList, nextItem],
+                    });
+                  };
+
+                  return (
+                    <div className="rounded-xl border border-[#B08D57]/40 bg-[#F2ECE1]/70 p-4 space-y-3">
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <div>
+                          <h3 className="text-xs font-semibold text-[#171412]">
+                            Envase do Lote, Múltiplos Frascos e Sobra Líquida
+                          </h3>
+                          <p className="text-[11px] text-[#6E5A49]">
+                            Combine tamanhos diferentes de frasco no mesmo lote (ex.: 50 ml + 30 ml) e defina se a sobra entra no custo do líquido.
+                          </p>
+                        </div>
+                        <div className="flex flex-wrap gap-1.5">
+                          {[30, 50, 60, 100].map((sz) => (
+                            <button
+                              key={sz}
+                              type="button"
+                              onClick={() => handleAddAdditionalBottle(sz)}
+                              className="px-2.5 py-1 rounded-md bg-white border border-[#D8CBB8] hover:border-[#B08D57] text-[11px] font-medium text-[#3B2B20] cursor-pointer"
+                            >
+                              + Frasco {sz} ml
+                            </button>
+                          ))}
+                          <button
+                            type="button"
+                            onClick={() => handleAddAdditionalBottle(20)}
+                            className="px-2.5 py-1 rounded-md bg-[#171412] text-[#FAF7F2] text-[11px] font-medium cursor-pointer"
+                          >
+                            + Outro tamanho
+                          </button>
+                        </div>
+                      </div>
+
+                      {showMultiPanel && (
+                        <>
+                          {batchSum && (
+                            <label className="flex items-start gap-2.5 p-3 rounded-lg bg-white border border-[#E4D8C5] cursor-pointer">
+                              <input
+                                type="checkbox"
+                                checked={draft.includeLeftoverInLiquidCost !== false}
+                                onChange={(e) =>
+                                  onChangeDraft({
+                                    ...draft,
+                                    includeLeftoverInLiquidCost: e.target.checked,
+                                  })
+                                }
+                                className="w-4 h-4 accent-[#171412] mt-0.5 shrink-0"
+                              />
+                              <div className="text-xs space-y-0.5">
+                                <span className="font-semibold text-[#171412] block">
+                                  Incluir o valor da sobra líquida no custo do líquido por frasco
+                                </span>
+                                <span className="text-[11px] text-[#6E5A49] block">
+                                  {batchSum.leftoverMl > 0.05 ? (
+                                    batchSum.includeLeftoverInLiquidCost ? (
+                                      <>
+                                        Sobra de <strong>{roundQuantity(batchSum.leftoverMl, 1)} ml</strong> ({formatBRL(batchSum.leftoverLiquidCostTotal)}) rateada nos{' '}
+                                        <strong>{roundQuantity(batchSum.totalBottledMl, 1)} ml</strong> envasados (+{formatBRL(batchSum.leftoverAbsorbedPerPrimaryUnit)} no frasco principal).
+                                      </>
+                                    ) : (
+                                      <>
+                                        Sobra de <strong>{roundQuantity(batchSum.leftoverMl, 1)} ml</strong> ({formatBRL(batchSum.leftoverLiquidCostTotal)}) não está sendo somada ao custo unitário.
+                                      </>
+                                    )
+                                  ) : (
+                                    <>Todo o líquido do lote está alocado nos frascos selecionados.</>
+                                  )}
+                                </span>
+                              </div>
+                            </label>
+                          )}
+
+                          {/* Primary Bottle Row inside Batch Allocation */}
+                          {batchSum && (
+                            <div className="p-3 rounded-lg bg-white border border-[#E4D8C5] flex flex-wrap items-center justify-between gap-3 text-xs">
+                              <div>
+                                <span className="font-semibold text-[#171412]">
+                                  Frasco principal: {draft.targetVolumeMl} ml
+                                </span>
+                                <span className="block text-[11px] text-[#6E5A49]">
+                                  {draft.bottle.mode === 'complete'
+                                    ? draft.bottle.complete.name
+                                    : 'Frasco montado por partes'}
+                                </span>
+                              </div>
+
+                              <div className="flex items-center gap-2">
+                                <label className="text-[11px] text-[#6E5A49]">
+                                  Qtd. envasada:
+                                </label>
+                                <input
+                                  type="number"
+                                  min="0"
+                                  step="1"
+                                  value={
+                                    draft.primaryBottleFillCount ??
+                                    batchSum.primaryBottleFillCount
+                                  }
+                                  onChange={(e) =>
+                                    onChangeDraft({
+                                      ...draft,
+                                      primaryBottleFillCount: Math.max(
+                                        0,
+                                        Math.floor(Number(e.target.value) || 0)
+                                      ),
+                                    })
+                                  }
+                                  className="w-20 px-2.5 py-1.5 rounded-md bg-[#FAF7F2] border border-[#D8CBB8] text-xs font-mono text-center"
+                                />
+                                {draft.primaryBottleFillCount != null && (
+                                  <button
+                                    type="button"
+                                    onClick={() =>
+                                      onChangeDraft({
+                                        ...draft,
+                                        primaryBottleFillCount: null,
+                                      })
+                                    }
+                                    className="px-2 py-1 rounded border border-[#D8CBB8] text-[11px] text-[#5C4332] hover:bg-[#F2ECE1] cursor-pointer"
+                                  >
+                                    Auto
+                                  </button>
+                                )}
+                                <span className="font-mono text-[11px] text-[#5C4332] ml-1">
+                                  ({roundQuantity(batchSum.primaryBottleFillCount * draft.targetVolumeMl, 1)} ml)
+                                </span>
+                              </div>
+                            </div>
+                          )}
+
+                          {/* Additional Bottle Options List */}
+                          {additionalList.map((ab, abIdx) => {
+                            const unitBotCost = computeUnitCost(
+                              ab.purchasedQty,
+                              ab.purchasePrice,
+                              ab.freight
+                            );
+                            const botOnlyCost = unitBotCost * Math.max(0, ab.usedQty ?? 1);
+                            const alloc = batchSum?.allocations.find((a) => a.id === ab.id);
+
+                            return (
+                              <div
+                                key={ab.id}
+                                className="p-3.5 rounded-lg bg-white border border-[#E4D8C5] space-y-2.5"
+                              >
+                                <div className="flex flex-wrap items-center justify-between gap-2">
+                                  <span className="text-xs font-semibold text-[#171412]">
+                                    Opção adicional #{abIdx + 1}: {ab.name} ({ab.capacityMl} ml)
+                                  </span>
+                                  <div className="flex items-center gap-3 text-[11px] font-mono">
+                                    <span className="text-[#5C4332]">
+                                      Frasco: {formatBRL(botOnlyCost)}/un
+                                    </span>
+                                    {alloc && (
+                                      <span className="font-semibold text-[#171412]">
+                                        Unitário: {formatBRL(alloc.unitCostTotal)} (Líq. {formatBRL(alloc.liquidCostPerUnit)})
+                                      </span>
+                                    )}
+                                    <button
+                                      type="button"
+                                      onClick={() =>
+                                        onChangeDraft({
+                                          ...draft,
+                                          additionalBottles: additionalList.filter(
+                                            (_, i) => i !== abIdx
+                                          ),
+                                        })
+                                      }
+                                      className="p-1 text-[#8C7A68] hover:text-[#9E3B33] cursor-pointer"
+                                      title="Remover opção de frasco"
+                                    >
+                                      <Trash2 className="w-3.5 h-3.5" />
+                                    </button>
+                                  </div>
+                                </div>
+
+                                <div className="grid grid-cols-2 sm:grid-cols-12 gap-2 items-end">
+                                  <div className="col-span-2 sm:col-span-4">
+                                    <label className="block text-[10px] text-[#6E5A49] mb-1">
+                                      Biblioteca (Frascos)
+                                    </label>
+                                    <select
+                                      value={ab.insumoId ?? ''}
+                                      onChange={(e) => {
+                                        const ins = packagingInsumos.find(
+                                          (i) => i.id === e.target.value
+                                        );
+                                        const next = [...additionalList];
+                                        if (!ins) {
+                                          next[abIdx] = { ...ab, insumoId: null };
+                                        } else {
+                                          next[abIdx] = {
+                                            ...ab,
+                                            insumoId: ins.id,
+                                            name: ins.name,
+                                            purchasedQty: ins.purchasedQty,
+                                            purchasePrice: ins.purchasePrice,
+                                            freight: ins.freight,
+                                          };
+                                        }
+                                        onChangeDraft({
+                                          ...draft,
+                                          additionalBottles: next,
+                                        });
+                                      }}
+                                      className="w-full px-2 py-1.5 rounded-md bg-[#FAF7F2] border border-[#D8CBB8] text-xs"
+                                    >
+                                      <option value="">Manual...</option>
+                                      {packagingInsumos.map((ins) => (
+                                        <option key={ins.id} value={ins.id}>
+                                          {ins.name} ({formatBRL(ins.unitCost)}/un)
+                                        </option>
+                                      ))}
+                                    </select>
+                                  </div>
+
+                                  <div className="col-span-2 sm:col-span-3">
+                                    <label className="block text-[10px] text-[#6E5A49] mb-1">
+                                      Nome / Modelo
+                                    </label>
+                                    <input
+                                      type="text"
+                                      value={ab.name}
+                                      onChange={(e) => {
+                                        const next = [...additionalList];
+                                        next[abIdx] = { ...ab, name: e.target.value };
+                                        onChangeDraft({
+                                          ...draft,
+                                          additionalBottles: next,
+                                        });
+                                      }}
+                                      className="w-full px-2 py-1.5 rounded-md bg-[#FAF7F2] border border-[#D8CBB8] text-xs"
+                                    />
+                                  </div>
+
+                                  <div className="sm:col-span-2">
+                                    <label className="block text-[10px] text-[#6E5A49] mb-1">
+                                      Volume (ml)
+                                    </label>
+                                    <input
+                                      type="number"
+                                      min="1"
+                                      step="any"
+                                      value={ab.capacityMl}
+                                      onChange={(e) => {
+                                        const next = [...additionalList];
+                                        next[abIdx] = {
+                                          ...ab,
+                                          capacityMl: Math.max(1, Number(e.target.value) || 0),
+                                        };
+                                        onChangeDraft({
+                                          ...draft,
+                                          additionalBottles: next,
+                                        });
+                                      }}
+                                      className="w-full px-2 py-1.5 rounded-md bg-[#FAF7F2] border border-[#D8CBB8] text-xs font-mono"
+                                    />
+                                  </div>
+
+                                  <div className="sm:col-span-3">
+                                    <label className="block text-[10px] text-[#6E5A49] mb-1">
+                                      Qtd. envasar no lote
+                                    </label>
+                                    <input
+                                      type="number"
+                                      min="0"
+                                      step="1"
+                                      value={ab.fillCount}
+                                      onChange={(e) => {
+                                        const next = [...additionalList];
+                                        next[abIdx] = {
+                                          ...ab,
+                                          fillCount: Math.max(
+                                            0,
+                                            Math.floor(Number(e.target.value) || 0)
+                                          ),
+                                        };
+                                        onChangeDraft({
+                                          ...draft,
+                                          additionalBottles: next,
+                                        });
+                                      }}
+                                      className="w-full px-2 py-1.5 rounded-md bg-[#FAF7F2] border border-[#B08D57] text-xs font-mono font-semibold"
+                                    />
+                                  </div>
+
+                                  <div className="sm:col-span-3">
+                                    <label className="block text-[10px] text-[#6E5A49] mb-1">
+                                      Qtd. comprada (un)
+                                    </label>
+                                    <input
+                                      type="number"
+                                      min="1"
+                                      step="any"
+                                      value={ab.purchasedQty}
+                                      onChange={(e) => {
+                                        const next = [...additionalList];
+                                        next[abIdx] = {
+                                          ...ab,
+                                          purchasedQty: Number(e.target.value),
+                                        };
+                                        onChangeDraft({
+                                          ...draft,
+                                          additionalBottles: next,
+                                        });
+                                      }}
+                                      className="w-full px-2 py-1.5 rounded-md bg-[#FAF7F2] border border-[#D8CBB8] text-xs font-mono"
+                                    />
+                                  </div>
+
+                                  <div className="sm:col-span-4">
+                                    <label className="block text-[10px] text-[#6E5A49] mb-1">
+                                      Valor compra (R$)
+                                    </label>
+                                    <CurrencyInput
+                                      compact
+                                      value={ab.purchasePrice}
+                                      onChange={(val) => {
+                                        const next = [...additionalList];
+                                        next[abIdx] = { ...ab, purchasePrice: val };
+                                        onChangeDraft({
+                                          ...draft,
+                                          additionalBottles: next,
+                                        });
+                                      }}
+                                    />
+                                  </div>
+
+                                  <div className="sm:col-span-3">
+                                    <label className="block text-[10px] text-[#6E5A49] mb-1">
+                                      Frete (R$)
+                                    </label>
+                                    <CurrencyInput
+                                      compact
+                                      value={ab.freight}
+                                      onChange={(val) => {
+                                        const next = [...additionalList];
+                                        next[abIdx] = { ...ab, freight: val };
+                                        onChangeDraft({
+                                          ...draft,
+                                          additionalBottles: next,
+                                        });
+                                      }}
+                                    />
+                                  </div>
+
+                                  <div className="sm:col-span-2">
+                                    <label className="block text-[10px] text-[#6E5A49] mb-1">
+                                      Uso / un
+                                    </label>
+                                    <input
+                                      type="number"
+                                      min="0"
+                                      step="any"
+                                      value={ab.usedQty}
+                                      onChange={(e) => {
+                                        const next = [...additionalList];
+                                        next[abIdx] = {
+                                          ...ab,
+                                          usedQty: Number(e.target.value),
+                                        };
+                                        onChangeDraft({
+                                          ...draft,
+                                          additionalBottles: next,
+                                        });
+                                      }}
+                                      className="w-full px-2 py-1.5 rounded-md bg-[#FAF7F2] border border-[#D8CBB8] text-xs font-mono"
+                                    />
+                                  </div>
+                                </div>
+                              </div>
+                            );
+                          })}
+
+                          {batchSum && (
+                            <div className="pt-2 border-t border-[#D8CBB8] flex flex-wrap items-center justify-between gap-2 text-xs text-[#3B2B20]">
+                              <span>
+                                Total envasado:{' '}
+                                <strong className="font-mono text-[#171412]">
+                                  {roundQuantity(batchSum.totalBottledMl, 1)} ml ({batchSum.bottlesCount} frascos)
+                                </strong>
+                              </span>
+                              <span>
+                                Sobra restante:{' '}
+                                <strong className="font-mono text-[#171412]">
+                                  {roundQuantity(batchSum.leftoverMl, 1)} ml
+                                </strong>
+                              </span>
+                            </div>
+                          )}
+                        </>
+                      )}
+                    </div>
+                  );
+                })()}
+
                 <div className="flex justify-between pt-2">
                   <button
                     type="button"
@@ -3563,7 +4047,7 @@ export const PerfumeCalculatorView: React.FC<PerfumeCalculatorViewProps> = ({
 
                 {/* Batch Yield Banner (when producing a batch from total essence) */}
                 {result.batchSummary?.isBatch && (
-                  <div className="rounded-xl border border-[#B08D57]/50 bg-[#F2ECE1] p-4 space-y-2.5">
+                  <div className="rounded-xl border border-[#B08D57]/50 bg-[#F2ECE1] p-4 space-y-3">
                     <div className="flex flex-wrap items-center justify-between gap-2">
                       <span className="text-xs font-semibold text-[#171412]">
                         Produção do Lote ({roundQuantity(result.batchSummary.essenceQty, 1)}{' '}
@@ -3589,10 +4073,10 @@ export const PerfumeCalculatorView: React.FC<PerfumeCalculatorViewProps> = ({
                       </div>
                       <div className="p-2.5 rounded-md bg-white border border-[#E4D8C5]">
                         <span className="block text-[11px] text-[#6E5A49]">
-                          Rendimento ({draft.targetVolumeMl} ml)
+                          Envasado / Sobra
                         </span>
                         <strong className="font-mono text-sm text-[#171412]">
-                          {result.batchSummary.bottlesCount} frascos (+{roundQuantity(result.batchSummary.leftoverMl, 1)} ml)
+                          {result.batchSummary.bottlesCount} un (+{roundQuantity(result.batchSummary.leftoverMl, 1)} ml)
                         </strong>
                       </div>
                       <div className="p-2.5 rounded-md bg-white border border-[#E4D8C5]">
@@ -3603,13 +4087,79 @@ export const PerfumeCalculatorView: React.FC<PerfumeCalculatorViewProps> = ({
                       </div>
                       <div className="p-2.5 rounded-md bg-white border border-[#E4D8C5]">
                         <span className="block text-[11px] text-[#6E5A49]">
-                          Frascos/emb. ({result.batchSummary.bottlesCount} × {formatBRL(result.packagingTotalCost)})
+                          Frascos/emb. ({result.batchSummary.bottlesCount} un)
                         </span>
                         <strong className="font-mono text-sm text-[#171412]">
                           {formatBRL(result.batchSummary.batchPackagingCostTotal)}
                         </strong>
                       </div>
                     </div>
+
+                    {result.batchSummary.leftoverMl > 0.05 && (
+                      <label className="flex items-center gap-2 text-xs text-[#3B2B20] pt-1 cursor-pointer no-print">
+                        <input
+                          type="checkbox"
+                          checked={draft.includeLeftoverInLiquidCost !== false}
+                          onChange={(e) =>
+                            onChangeDraft({
+                              ...draft,
+                              includeLeftoverInLiquidCost: e.target.checked,
+                            })
+                          }
+                          className="w-4 h-4 accent-[#171412]"
+                        />
+                        <span>
+                          Incluir sobra de{' '}
+                          <strong>{roundQuantity(result.batchSummary.leftoverMl, 1)} ml</strong>{' '}
+                          ({formatBRL(result.batchSummary.leftoverLiquidCostTotal)}) no valor do líquido dos frascos
+                        </span>
+                      </label>
+                    )}
+
+                    {result.batchSummary.allocations.length > 1 && (
+                      <div className="overflow-x-auto rounded-lg border border-[#E4D8C5] bg-white">
+                        <table className="w-full text-left border-collapse text-xs">
+                          <thead>
+                            <tr className="bg-[#FAF7F2] border-b border-[#E4D8C5] text-[#6E5A49]">
+                              <th className="py-2 px-3">Opção de Frasco</th>
+                              <th className="py-2 px-3 text-right">Qtd.</th>
+                              <th className="py-2 px-3 text-right">Volume</th>
+                              <th className="py-2 px-3 text-right">Líquido / un</th>
+                              <th className="py-2 px-3 text-right">Embalagem / un</th>
+                              <th className="py-2 px-3 text-right">Custo Unitário</th>
+                              <th className="py-2 px-3 text-right">Subtotal</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-[#F2ECE1]">
+                            {result.batchSummary.allocations.map((alloc) => (
+                              <tr key={alloc.id}>
+                                <td className="py-2 px-3 font-medium text-[#171412]">
+                                  {alloc.name} ({alloc.capacityMl} ml)
+                                </td>
+                                <td className="py-2 px-3 text-right font-mono tabular-nums">
+                                  {alloc.fillCount} un
+                                </td>
+                                <td className="py-2 px-3 text-right font-mono tabular-nums text-[#5C4332]">
+                                  {roundQuantity(alloc.totalMl, 1)} ml
+                                </td>
+                                <td className="py-2 px-3 text-right font-mono tabular-nums">
+                                  {formatBRL(alloc.liquidCostPerUnit)}
+                                </td>
+                                <td className="py-2 px-3 text-right font-mono tabular-nums text-[#6E5A49]">
+                                  {formatBRL(alloc.packagingTotalCostPerUnit)}
+                                </td>
+                                <td className="py-2 px-3 text-right font-mono font-semibold text-[#171412] tabular-nums">
+                                  {formatBRL(alloc.unitCostTotal)}
+                                </td>
+                                <td className="py-2 px-3 text-right font-mono font-semibold text-[#171412] tabular-nums">
+                                  {formatBRL(alloc.totalAllocationCost)}
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    )}
                   </div>
                 )}
 
@@ -3617,7 +4167,7 @@ export const PerfumeCalculatorView: React.FC<PerfumeCalculatorViewProps> = ({
                 <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
                   <div className="p-4 rounded-lg bg-[#FAF7F2] border border-[#E4D8C5]">
                     <p className="text-[11px] text-[#6E5A49]">
-                      {result.batchSummary?.isBatch ? 'Frasco unitário' : 'Volume final'}
+                      {result.batchSummary?.isBatch ? 'Frasco principal' : 'Volume final'}
                     </p>
                     <p className="font-mono text-xl font-semibold text-[#171412] tabular-nums mt-1">
                       {roundQuantity(result.liquidVolumeTotalMl, 1)} ml
@@ -3632,6 +4182,13 @@ export const PerfumeCalculatorView: React.FC<PerfumeCalculatorViewProps> = ({
                     <p className="font-mono text-xl font-semibold text-[#171412] tabular-nums mt-1">
                       {formatBRL(result.liquidCostTotal)}
                     </p>
+                    {result.batchSummary?.isBatch &&
+                      result.batchSummary.includeLeftoverInLiquidCost &&
+                      result.batchSummary.leftoverAbsorbedPerPrimaryUnit > 0.004 && (
+                        <p className="text-[10px] text-[#6E5A49] mt-0.5">
+                          Inclui +{formatBRL(result.batchSummary.leftoverAbsorbedPerPrimaryUnit)} da sobra
+                        </p>
+                      )}
                   </div>
                   <div className="p-4 rounded-lg bg-[#FAF7F2] border border-[#E4D8C5]">
                     <p className="text-[11px] text-[#6E5A49]">Custo embalagem</p>
@@ -4086,7 +4643,7 @@ export const PerfumeCalculatorView: React.FC<PerfumeCalculatorViewProps> = ({
                     </button>
                     <button
                       type="button"
-                      onClick={() => generatePerfumePdfReport({ draft, result })}
+                      onClick={handleGeneratePdf}
                       className="px-3.5 py-2 rounded-lg border border-[#D8CBB8] bg-white text-xs font-medium text-[#171412] hover:border-[#B08D57] inline-flex items-center gap-1.5 cursor-pointer"
                     >
                       <FileDown className="w-3.5 h-3.5" />
@@ -4141,11 +4698,25 @@ export const PerfumeCalculatorView: React.FC<PerfumeCalculatorViewProps> = ({
                     </span>
                   </div>
                   <div className="flex justify-between text-[11px] text-[#5C4332]">
-                    <span>Rende ({draft.targetVolumeMl} ml)</span>
+                    <span>Rende ({result.batchSummary.bottlesCount} un)</span>
                     <span className="font-mono font-semibold text-[#171412] tabular-nums">
-                      {result.batchSummary.bottlesCount} frascos (+{roundQuantity(result.batchSummary.leftoverMl, 1)} ml)
+                      {result.batchSummary.allocations.length > 1
+                        ? result.batchSummary.allocations
+                            .map((a) => `${a.fillCount}×${a.capacityMl}ml`)
+                            .join(' + ')
+                        : `${result.batchSummary.bottlesCount} frascos`}{' '}
+                      (+{roundQuantity(result.batchSummary.leftoverMl, 1)} ml)
                     </span>
                   </div>
+                  {result.batchSummary.includeLeftoverInLiquidCost &&
+                    result.batchSummary.leftoverAbsorbedPerPrimaryUnit > 0.004 && (
+                      <div className="flex justify-between text-[11px] text-[#5C4332]">
+                        <span>Sobra rateada no líquido</span>
+                        <span className="font-mono tabular-nums">
+                          +{formatBRL(result.batchSummary.leftoverAbsorbedPerPrimaryUnit)}/un
+                        </span>
+                      </div>
+                    )}
                   <div className="flex justify-between text-[11px] text-[#5C4332]">
                     <span>Frascos/emb. lote ({result.batchSummary.bottlesCount}×)</span>
                     <span className="font-mono tabular-nums">

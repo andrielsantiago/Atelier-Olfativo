@@ -45,15 +45,32 @@ export function generatePerfumePdfReport(params: {
   doc.setFontSize(10);
   doc.text('RESUMO DE PRODUÇÃO', 14, 42);
 
+  const hasMultiBottle = Boolean(
+    result.batchSummary?.isBatch &&
+      result.batchSummary.allocations &&
+      result.batchSummary.allocations.length > 1
+  );
+
   const summaryHead = result.batchSummary?.isBatch
-    ? [['Frasco', 'Lote', 'Rendimento', 'Líquido / Frasco', 'Embalagem', 'Custo Unitário', 'Total do Lote']]
+    ? [[
+        'Frasco Ref.',
+        'Lote',
+        'Rendimento',
+        result.batchSummary.includeLeftoverInLiquidCost &&
+        result.batchSummary.leftoverAbsorbedPerPrimaryUnit > 0
+          ? 'Líquido / Frasco (c/ sobra)'
+          : 'Líquido / Frasco',
+        'Embalagem',
+        'Custo Unitário',
+        'Total do Lote',
+      ]]
     : [['Volume Final', 'Custo do Líquido', 'Frasco & Embalagem', 'Custo Total Unitário', 'Perdas']];
 
   const summaryBody = result.batchSummary?.isBatch
     ? [[
         `${draft.targetVolumeMl} ml`,
         `${roundQuantity(result.batchSummary.batchVolumeMl, 1)} ml`,
-        `${result.batchSummary.bottlesCount} frascos`,
+        `${result.batchSummary.bottlesCount} frascos (+${roundQuantity(result.batchSummary.leftoverMl, 1)} ml sobra)`,
         formatBRL(result.liquidCostTotal),
         formatBRL(result.packagingTotalCost),
         formatBRL(result.unitCostTotal),
@@ -71,19 +88,44 @@ export function generatePerfumePdfReport(params: {
     startY: 45,
     theme: 'grid',
     headStyles: { fillColor: [242, 236, 225], textColor: [23, 20, 18], fontStyle: 'bold' },
-    styles: { fontSize: 9, cellPadding: 3, textColor: [23, 20, 18] },
+    styles: { fontSize: 8.5, cellPadding: 2.8, textColor: [23, 20, 18] },
     head: summaryHead,
     body: summaryBody,
   });
 
+  let currentY = (doc as any).lastAutoTable.finalY + 8;
+
+  if (hasMultiBottle && result.batchSummary) {
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(10);
+    doc.text('ENVASE MULTI-FRASCOS DO LOTE', 14, currentY);
+
+    autoTable(doc, {
+      startY: currentY + 3,
+      theme: 'grid',
+      headStyles: { fillColor: [242, 236, 225], textColor: [23, 20, 18], fontStyle: 'bold' },
+      styles: { fontSize: 8.5, cellPadding: 2.5 },
+      head: [['Frasco / Opção', 'Qtd.', 'Volume', 'Líquido / un', 'Embalagem / un', 'Custo Unit.', 'Subtotal']],
+      body: result.batchSummary.allocations.map((a) => [
+        `${a.name} (${a.capacityMl} ml)`,
+        `${a.fillCount} un`,
+        `${roundQuantity(a.totalMl, 1)} ml`,
+        formatBRL(a.liquidCostPerUnit),
+        formatBRL(a.packagingTotalCostPerUnit),
+        formatBRL(a.unitCostTotal),
+        formatBRL(a.totalAllocationCost),
+      ]),
+    });
+    currentY = (doc as any).lastAutoTable.finalY + 8;
+  }
+
   // Detailed ingredients & packaging table
-  const afterSummaryY = (doc as any).lastAutoTable.finalY + 8;
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(10);
-  doc.text('COMPOSIÇÃO DA FÓRMULA E CUSTOS PROPORCIONAIS', 14, afterSummaryY);
+  doc.text('COMPOSIÇÃO DA FÓRMULA E CUSTOS PROPORCIONAIS', 14, currentY);
 
   autoTable(doc, {
-    startY: afterSummaryY + 3,
+    startY: currentY + 3,
     theme: 'striped',
     headStyles: { fillColor: [92, 67, 50], textColor: [250, 247, 242], fontStyle: 'bold' },
     styles: { fontSize: 8.5, cellPadding: 2.5 },

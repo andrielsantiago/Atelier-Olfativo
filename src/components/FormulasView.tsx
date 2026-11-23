@@ -123,6 +123,14 @@ export const FormulasView: React.FC<FormulasViewProps> = ({
         }
       });
     }
+    for (const b of updatedDraft.additionalBottles || []) {
+      const ins = b.insumoId ? insumoMap.get(b.insumoId) : undefined;
+      if (ins) {
+        b.purchasedQty = ins.purchasedQty;
+        b.purchasePrice = ins.purchasePrice;
+        b.freight = ins.freight;
+      }
+    }
     for (const p of updatedDraft.packaging) {
       const ins = p.insumoId ? insumoMap.get(p.insumoId) : undefined;
       if (ins) {
@@ -305,6 +313,17 @@ export const FormulasView: React.FC<FormulasViewProps> = ({
                     })(),
                   },
                 },
+                additionalBottles: (formula.data.additionalBottles || []).map((ab) => {
+                  const ins = ab.insumoId ? insumoMap.get(ab.insumoId) : undefined;
+                  return ins
+                    ? {
+                        ...ab,
+                        purchasedQty: ins.purchasedQty,
+                        purchasePrice: ins.purchasePrice,
+                        freight: ins.freight,
+                      }
+                    : ab;
+                }),
                 packaging: (formula.data.packaging || []).map((p) => {
                   const ins = p.insumoId ? insumoMap.get(p.insumoId) : undefined;
                   return ins

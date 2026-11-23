@@ -947,19 +947,31 @@ export async function saveCalculationAndDeductStock(params: {
 
     if (deductStock) {
       const deductedByInsumo = new Map<string, number>();
-      const liquidScale = result.unitLiquidScale ?? 1;
+      const isBatch = Boolean(result.batchSummary?.isBatch);
+      const primaryBottleUnits = isBatch
+        ? (result.batchSummary?.primaryBottleFillCount ?? batchUnits)
+        : batchUnits;
+
       for (const line of result.lines) {
         if (!line.insumoId || line.effectiveQtyWithLoss <= 0) continue;
         const ins = insumos.find((i) => i.id === line.insumoId);
         if (!ins || !ins.stockEnabled) continue;
 
-        const perUnitEffective =
-          line.group === 'Frasco' || line.group === 'Embalagem'
-            ? line.effectiveQtyWithLoss
-            : line.effectiveQtyWithLoss * liquidScale;
+        let qtyToDeductInUsedUnit = 0;
+        if (line.group === 'Frasco') {
+          qtyToDeductInUsedUnit = line.effectiveQtyWithLoss * primaryBottleUnits;
+        } else if (line.group === 'Embalagem') {
+          qtyToDeductInUsedUnit = line.effectiveQtyWithLoss * batchUnits;
+        } else if (isBatch && result.batchSummary && result.batchSummary.bottlesCount > 0) {
+          // Batch mode: raw line quantity is already the full batch liquid quantity
+          qtyToDeductInUsedUnit =
+            line.effectiveQtyWithLoss * (batchUnits / result.batchSummary.bottlesCount);
+        } else {
+          qtyToDeductInUsedUnit = line.effectiveQtyWithLoss * batchUnits;
+        }
 
         const conv = convertQuantity(
-          perUnitEffective * batchUnits,
+          qtyToDeductInUsedUnit,
           line.usedUnit,
           ins.purchaseUnit,
           ins.density,
@@ -971,6 +983,28 @@ export async function saveCalculationAndDeductStock(params: {
           ins.id,
           (deductedByInsumo.get(ins.id) || 0) + conv.value
         );
+      }
+
+      if (isBatch && draft.additionalBottles) {
+        for (const ab of draft.additionalBottles) {
+          const fill = Math.floor(Number(ab.fillCount) || 0);
+          const usedQty = Math.max(0, Number(ab.usedQty ?? 1));
+          if (!ab.insumoId || fill <= 0 || usedQty <= 0) continue;
+          const ins = insumos.find((i) => i.id === ab.insumoId);
+          if (!ins || !ins.stockEnabled) continue;
+          const conv = convertQuantity(
+            fill * usedQty,
+            'un',
+            ins.purchaseUnit,
+            ins.density,
+            ins.name
+          );
+          if (!conv.ok || conv.value <= 0) continue;
+          deductedByInsumo.set(
+            ins.id,
+            (deductedByInsumo.get(ins.id) || 0) + conv.value
+          );
+        }
       }
 
       deductedByInsumo.forEach((totalUsed, insId) => {
@@ -1114,6 +1148,14 @@ export function compareCalculationWithCurrent(
         part.freight = ins.freight;
       }
     });
+  }
+  for (const b of refreshedDraft.additionalBottles || []) {
+    const ins = b.insumoId ? insumoMap.get(b.insumoId) : undefined;
+    if (ins) {
+      b.purchasedQty = ins.purchasedQty;
+      b.purchasePrice = ins.purchasePrice;
+      b.freight = ins.freight;
+    }
   }
   for (const p of refreshedDraft.packaging) {
     const ins = p.insumoId ? insumoMap.get(p.insumoId) : undefined;

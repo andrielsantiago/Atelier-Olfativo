@@ -1,5 +1,6 @@
 import {
   BaseConfig,
+  BottleAllocationSummary,
   CalculationCostLine,
   CalculationResult,
   Insumo,
@@ -931,15 +932,72 @@ export function calculatePerfumeCost(
   const concentrationPct = Math.max(0, Number(draft.essenceConcentrationPct) || 0);
   const yieldSummary = computeEssenceYieldSummary(draft);
 
+  const activeAdditionalBottles = (draft.additionalBottles || []).filter(
+    (b) => Number(b.capacityMl) > 0 && Math.floor(Number(b.fillCount) || 0) > 0
+  );
+
+  for (const b of activeAdditionalBottles) {
+    if ((Number(b.purchasedQty) || 0) <= 0) {
+      errors.push(`Etapa 5: quantidade comprada de "${b.name || 'frasco adicional'}" deve ser maior que zero.`);
+    }
+  }
+
   const isMultiBottleBatch =
     draft.inputMode === 'absolute' &&
-    concentrationPct > 0 &&
-    draft.autoCalcBaseFromEssence !== false &&
-    batchLiquidVolumeMl > draft.targetVolumeMl * 1.01 &&
-    draft.targetVolumeMl > 0;
+    draft.targetVolumeMl > 0 &&
+    ((concentrationPct > 0 &&
+      draft.autoCalcBaseFromEssence !== false &&
+      batchLiquidVolumeMl > draft.targetVolumeMl * 1.01) ||
+      activeAdditionalBottles.length > 0);
+
+  const primaryCapacityMl = Math.max(0, Number(draft.targetVolumeMl) || 0);
+  const additionalBottledMl = activeAdditionalBottles.reduce(
+    (s, b) => s + Number(b.capacityMl) * Math.floor(Number(b.fillCount) || 0),
+    0
+  );
+  const additionalBottlesCount = activeAdditionalBottles.reduce(
+    (s, b) => s + Math.floor(Number(b.fillCount) || 0),
+    0
+  );
+
+  const primaryBottleFillCount =
+    draft.primaryBottleFillCount !== undefined && draft.primaryBottleFillCount !== null
+      ? Math.max(0, Math.floor(Number(draft.primaryBottleFillCount) || 0))
+      : primaryCapacityMl > 0
+        ? Math.max(
+            0,
+            Math.floor(
+              Math.max(0, batchLiquidVolumeMl - additionalBottledMl) / primaryCapacityMl
+            )
+          )
+        : 0;
+
+  const primaryBottledMl = primaryBottleFillCount * primaryCapacityMl;
+  const totalBottledMl = primaryBottledMl + additionalBottledMl;
+  const batchBottlesCount = primaryBottleFillCount + additionalBottlesCount;
+  const batchExactBottlesCount =
+    primaryCapacityMl > 0 ? batchLiquidVolumeMl / primaryCapacityMl : 0;
+  const batchLeftoverMl = Math.max(0, batchLiquidVolumeMl - totalBottledMl);
+
+  if (isMultiBottleBatch && totalBottledMl > batchLiquidVolumeMl + 0.05) {
+    warnings.push(
+      `O volume total selecionado nos frascos (${roundQuantity(totalBottledMl, 1)} ml) excede o líquido disponível no lote (${roundQuantity(batchLiquidVolumeMl, 1)} ml).`
+    );
+  }
+
+  const includeLeftoverInLiquidCost = draft.includeLeftoverInLiquidCost !== false;
+  const canAbsorbLeftover =
+    isMultiBottleBatch &&
+    includeLeftoverInLiquidCost &&
+    totalBottledMl > 0 &&
+    totalBottledMl <= batchLiquidVolumeMl + 0.05;
+
+  const effectiveDivisorMl = canAbsorbLeftover ? totalBottledMl : batchLiquidVolumeMl;
 
   const unitLiquidScale = isMultiBottleBatch
-    ? draft.targetVolumeMl / batchLiquidVolumeMl
+    ? effectiveDivisorMl > 0
+      ? primaryCapacityMl / effectiveDivisorMl
+      : 1
     : 1;
 
   const scaledEssenceCost = essenceCost * unitLiquidScale;
@@ -952,14 +1010,85 @@ export function calculatePerfumeCost(
   const liquidCostTotal = batchLiquidCostTotal * unitLiquidScale;
   const unitCostTotal = liquidCostTotal + packagingTotalCost;
 
-  const batchBottlesCount =
-    draft.targetVolumeMl > 0 ? Math.floor(batchLiquidVolumeMl / draft.targetVolumeMl) : 0;
-  const batchExactBottlesCount =
-    draft.targetVolumeMl > 0 ? batchLiquidVolumeMl / draft.targetVolumeMl : 0;
-  const batchLeftoverMl =
-    draft.targetVolumeMl > 0
-      ? Math.max(0, batchLiquidVolumeMl - batchBottlesCount * draft.targetVolumeMl)
+  const allocations: BottleAllocationSummary[] = [];
+  const primaryName =
+    draft.bottle.mode === 'complete'
+      ? draft.bottle.complete.name.trim() || `Frasco ${primaryCapacityMl} ml`
+      : `Frasco por partes ${primaryCapacityMl} ml`;
+
+  if (primaryBottleFillCount > 0 || activeAdditionalBottles.length === 0) {
+    const baseLiquidPerUnit =
+      batchLiquidVolumeMl > 0
+        ? batchLiquidCostTotal * (primaryCapacityMl / batchLiquidVolumeMl)
+        : 0;
+    const effectiveLiquidPerUnit =
+      effectiveDivisorMl > 0
+        ? batchLiquidCostTotal * (primaryCapacityMl / effectiveDivisorMl)
+        : 0;
+    const absorbedPerUnit = canAbsorbLeftover
+      ? Math.max(0, effectiveLiquidPerUnit - baseLiquidPerUnit)
       : 0;
+    const unitTotal = effectiveLiquidPerUnit + packagingTotalCost;
+    allocations.push({
+      id: 'primary',
+      isPrimary: true,
+      insumoId: draft.bottle.mode === 'complete' ? draft.bottle.complete.insumoId : null,
+      name: primaryName,
+      capacityMl: primaryCapacityMl,
+      fillCount: primaryBottleFillCount,
+      totalMl: primaryBottledMl,
+      liquidCostPerUnit: effectiveLiquidPerUnit,
+      leftoverAbsorbedPerUnit: absorbedPerUnit,
+      bottleOnlyCostPerUnit: bottleTotalCost,
+      packagingItemsCostPerUnit: packagingItemsCost,
+      packagingTotalCostPerUnit: packagingTotalCost,
+      unitCostTotal: unitTotal,
+      totalAllocationCost: primaryBottleFillCount * unitTotal,
+    });
+  }
+
+  for (const b of activeAdditionalBottles) {
+    const fill = Math.floor(Number(b.fillCount) || 0);
+    const capMl = Number(b.capacityMl) || 0;
+    const usedCount = Math.max(0, Number(b.usedQty ?? 1));
+    const unitBottleOnly =
+      computeUnitCost(b.purchasedQty, b.purchasePrice, b.freight) * usedCount;
+    const pkgTotal = unitBottleOnly + packagingItemsCost;
+    const baseLiquidPerUnit =
+      batchLiquidVolumeMl > 0 ? batchLiquidCostTotal * (capMl / batchLiquidVolumeMl) : 0;
+    const effectiveLiquidPerUnit =
+      effectiveDivisorMl > 0 ? batchLiquidCostTotal * (capMl / effectiveDivisorMl) : 0;
+    const absorbedPerUnit = canAbsorbLeftover
+      ? Math.max(0, effectiveLiquidPerUnit - baseLiquidPerUnit)
+      : 0;
+    const unitTotal = effectiveLiquidPerUnit + pkgTotal;
+
+    allocations.push({
+      id: b.id,
+      isPrimary: false,
+      insumoId: b.insumoId,
+      name: b.name.trim() || `Frasco ${capMl} ml`,
+      capacityMl: capMl,
+      fillCount: fill,
+      totalMl: fill * capMl,
+      liquidCostPerUnit: effectiveLiquidPerUnit,
+      leftoverAbsorbedPerUnit: absorbedPerUnit,
+      bottleOnlyCostPerUnit: unitBottleOnly,
+      packagingItemsCostPerUnit: packagingItemsCost,
+      packagingTotalCostPerUnit: pkgTotal,
+      unitCostTotal: unitTotal,
+      totalAllocationCost: fill * unitTotal,
+    });
+  }
+
+  const batchPackagingCostTotal = allocations.reduce(
+    (s, a) => s + a.fillCount * a.packagingTotalCostPerUnit,
+    0
+  );
+  const totalBatchCostWithBottles = batchLiquidCostTotal + batchPackagingCostTotal;
+  const leftoverLiquidCostTotal =
+    batchLiquidVolumeMl > 0 ? batchLiquidCostTotal * (batchLeftoverMl / batchLiquidVolumeMl) : 0;
+  const primaryAllocation = allocations.find((a) => a.isPrimary);
 
   const batchSummary =
     concentrationPct > 0 || isMultiBottleBatch
@@ -976,9 +1105,16 @@ export function calculatePerfumeCost(
           bottlesCount: batchBottlesCount,
           exactBottlesCount: batchExactBottlesCount,
           leftoverMl: batchLeftoverMl,
-          batchPackagingCostTotal: batchBottlesCount * packagingTotalCost,
-          totalBatchCostWithBottles:
-            batchLiquidCostTotal + batchBottlesCount * packagingTotalCost,
+          totalBottledMl,
+          includeLeftoverInLiquidCost,
+          leftoverLiquidCostTotal,
+          leftoverAbsorbedPerPrimaryUnit: primaryAllocation
+            ? primaryAllocation.leftoverAbsorbedPerUnit
+            : 0,
+          primaryBottleFillCount,
+          allocations,
+          batchPackagingCostTotal,
+          totalBatchCostWithBottles,
           estimatedWithoutDensity: yieldSummary.estimatedWithoutDensity,
         }
       : null;

@@ -48,6 +48,35 @@ function AppShell() {
     createEmptyFormulaDraft([])
   );
 
+  // Restore user's in-progress calculator draft from localStorage on login
+  useEffect(() => {
+    if (!user?.uid) return;
+    try {
+      const raw = localStorage.getItem(`atelier_active_draft_${user.uid}`);
+      if (raw) {
+        const parsed = JSON.parse(raw) as PerfumeFormulaDraft;
+        if (parsed && parsed.rawMaterials && parsed.base && parsed.bottle) {
+          setCalculatorDraft(parsed);
+        }
+      }
+    } catch {
+      // Ignore invalid localStorage payload
+    }
+  }, [user?.uid]);
+
+  // Persist active draft locally as user edits
+  useEffect(() => {
+    if (!user?.uid) return;
+    try {
+      localStorage.setItem(
+        `atelier_active_draft_${user.uid}`,
+        JSON.stringify(calculatorDraft)
+      );
+    } catch {
+      // Ignore storage quota errors
+    }
+  }, [user?.uid, calculatorDraft]);
+
   useEffect(() => {
     let unsubCollections: (() => void) | null = null;
     let active = true;

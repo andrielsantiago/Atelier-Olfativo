@@ -274,6 +274,35 @@ export interface BottleConfig {
   };
 }
 
+export interface AdditionalBottleOption {
+  id: string;
+  insumoId: string | null;
+  name: string;
+  capacityMl: number;
+  purchasedQty: number;
+  purchasePrice: number;
+  freight: number;
+  usedQty: number;
+  fillCount: number;
+}
+
+export interface BottleAllocationSummary {
+  id: string;
+  isPrimary: boolean;
+  insumoId: string | null;
+  name: string;
+  capacityMl: number;
+  fillCount: number;
+  totalMl: number;
+  liquidCostPerUnit: number;
+  leftoverAbsorbedPerUnit: number;
+  bottleOnlyCostPerUnit: number;
+  packagingItemsCostPerUnit: number;
+  packagingTotalCostPerUnit: number;
+  unitCostTotal: number;
+  totalAllocationCost: number;
+}
+
 export interface PackagingItemInput {
   id: string;
   insumoId: string | null;
@@ -313,6 +342,9 @@ export interface PerfumeFormulaDraft {
   qas: FormulaQAInput[];
   base: BaseConfig;
   bottle: BottleConfig;
+  primaryBottleFillCount?: number | null;
+  additionalBottles?: AdditionalBottleOption[];
+  includeLeftoverInLiquidCost?: boolean;
   packaging: PackagingItemInput[];
   selectedSizes: number[];
   customSizeMl: number | null;
@@ -427,6 +459,12 @@ export interface CalculationResult {
     bottlesCount: number;
     exactBottlesCount: number;
     leftoverMl: number;
+    totalBottledMl: number;
+    includeLeftoverInLiquidCost: boolean;
+    leftoverLiquidCostTotal: number;
+    leftoverAbsorbedPerPrimaryUnit: number;
+    primaryBottleFillCount: number;
+    allocations: BottleAllocationSummary[];
     batchPackagingCostTotal: number;
     totalBatchCostWithBottles: number;
     estimatedWithoutDensity: boolean;
